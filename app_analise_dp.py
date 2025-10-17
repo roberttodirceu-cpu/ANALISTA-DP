@@ -47,6 +47,16 @@ def set_multiselect_none(key):
     st.session_state[key] = []
     st.rerun()
         
+def set_dashboard_multiselect_all(col, opcoes_unicas):
+    """Callback para definir a seleção de um multiselect de dashboard para TODAS as opções."""
+    st.session_state[f'filtro_key_{col}'] = opcoes_unicas
+    st.rerun()
+
+def set_dashboard_multiselect_none(col):
+    """Callback para limpar a seleção de um multiselect de dashboard (NENHUMA opção)."""
+    st.session_state[f'filtro_key_{col}'] = []
+    st.rerun()
+
 def initialize_widget_state(key, options, initial_default_calc):
     """Inicializa as chaves de estado de sessão para multiselect."""
     all_options_key = f'all_{key}_options'
@@ -239,7 +249,7 @@ with st.sidebar:
                 label_visibility="collapsed"
             )
             st.markdown("---")
-                                           
+                                        
             # Realiza o processamento e a conversão de tipos (usando cache)
             # PASSAMOS AS SELEÇÕES ATUAIS (colunas_moeda e colunas_texto)
             df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
@@ -386,6 +396,29 @@ else:
                 if col not in df_analise_base.columns: continue
                 opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
                 with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
+                    
+                    # --- NOVO: Botões de Seleção Rápida ---
+                    col_sel_btn, col_clr_btn = st.columns(2) 
+                    
+                    with col_sel_btn:
+                        st.button(
+                            "✅ Selecionar Tudo",
+                            on_click=set_dashboard_multiselect_all,
+                            args=(col, opcoes_unicas), 
+                            key=f'sel_all_dash_{col}_{st.session_state.filtro_reset_trigger}', 
+                            use_container_width=True
+                        )
+
+                    with col_clr_btn:
+                        st.button(
+                            "🗑️ Limpar",
+                            on_click=set_dashboard_multiselect_none,
+                            args=(col,), 
+                            key=f'clr_all_dash_{col}_{st.session_state.filtro_reset_trigger}', 
+                            use_container_width=True
+                        )
+                    st.markdown("---") # Separador visual
+
                     if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
                     selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
                     multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
@@ -396,9 +429,32 @@ else:
         # Renderiza a segunda coluna de filtros
         with cols_container[1]:
              for col in filtros_col_2:
-                if col not in df_analise_base.columns: continue
-                opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
-                with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
+                 if col not in df_analise_base.columns: continue
+                 opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
+                 with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
+                     
+                    # --- NOVO: Botões de Seleção Rápida ---
+                    col_sel_btn, col_clr_btn = st.columns(2) 
+                    
+                    with col_sel_btn:
+                        st.button(
+                            "✅ Selecionar Tudo",
+                            on_click=set_dashboard_multiselect_all,
+                            args=(col, opcoes_unicas), 
+                            key=f'sel_all_dash_{col}_{st.session_state.filtro_reset_trigger}', 
+                            use_container_width=True
+                        )
+
+                    with col_clr_btn:
+                        st.button(
+                            "🗑️ Limpar",
+                            on_click=set_dashboard_multiselect_none,
+                            args=(col,), 
+                            key=f'clr_all_dash_{col}_{st.session_state.filtro_reset_trigger}', 
+                            use_container_width=True
+                        )
+                    st.markdown("---") # Separador visual
+
                     if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
                     selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
                     multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
@@ -409,9 +465,32 @@ else:
         # Renderiza a terceira coluna de filtros
         with cols_container[2]:
              for col in filtros_col_3:
-                if col not in df_analise_base.columns: continue
-                opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
-                with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
+                 if col not in df_analise_base.columns: continue
+                 opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
+                 with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
+                     
+                    # --- NOVO: Botões de Seleção Rápida ---
+                    col_sel_btn, col_clr_btn = st.columns(2) 
+                    
+                    with col_sel_btn:
+                        st.button(
+                            "✅ Selecionar Tudo",
+                            on_click=set_dashboard_multiselect_all,
+                            args=(col, opcoes_unicas), 
+                            key=f'sel_all_dash_{col}_{st.session_state.filtro_reset_trigger}', 
+                            use_container_width=True
+                        )
+
+                    with col_clr_btn:
+                        st.button(
+                            "🗑️ Limpar",
+                            on_click=set_dashboard_multiselect_none,
+                            args=(col,), 
+                            key=f'clr_all_dash_{col}_{st.session_state.filtro_reset_trigger}', 
+                            use_container_width=True
+                        )
+                    st.markdown("---") # Separador visual
+
                     if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
                     selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
                     multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
@@ -435,12 +514,12 @@ else:
 
                     st.markdown(f"#### 🗓️ Intervalo de Data ({col_data_padrao})")
                     data_range = st.slider("", 
-                                           min_value=data_min.to_pydatetime(), 
-                                           max_value=data_max.to_pydatetime(),
-                                           value=default_date_range,
-                                           format="YYYY/MM/DD",
-                                           key=slider_key,
-                                           label_visibility="collapsed")
+                                            min_value=data_min.to_pydatetime(), 
+                                            max_value=data_max.to_pydatetime(),
+                                            value=default_date_range,
+                                            format="YYYY/MM/DD",
+                                            key=slider_key,
+                                            label_visibility="collapsed")
                     current_selections[col_data_padrao] = data_range
                 except Exception:
                     st.warning("Erro na exibição do filtro de data.")
@@ -499,7 +578,7 @@ else:
         # Se nenhum filtro foi aplicado, retorna o DF base (sem cópia)
         if not filtro_aplicado:
              return df_base
-             
+            
         return df_filtrado_temp
 
     # Monta a lista de filtros ativos (seleções atuais)
@@ -525,15 +604,122 @@ else:
     st.caption(f"Análise baseada em **{len(df_analise)}** registros filtrados do arquivo atual.") 
     st.markdown("---")
     
+    coluna_metrica_principal = st.session_state.get('metrica_principal_selectbox')
+
     # ----------------------------------------------------
-    # MÉTRICAS (KPIs) 
+    # MÉTRICAS AVANÇADAS DINÂMICAS (NOVO RECURSO)
+    # ----------------------------------------------------
+    
+    # 1. Identificação de Filtros Chave e Estado de Filtragem
+    # Colunas com palavras-chave que podem ser chaves principais de agrupamento
+    key_filter_columns = [
+        col for col in colunas_categoricas_filtro
+        if any(keyword in col.lower() for keyword in ['empresa', 'cliente', 'projeto', 'departamento', 'filial', 'setor', 'unidade', 'funcionario', 'nome', 'rubrica', 'id', 'código'])
+    ]
+
+    single_key_filter = None
+    single_key_selection = None
+
+    # Verifica se há exatamente UM filtro categórico aplicado com SELEÇÃO ÚNICA.
+    active_categorical_filters = [c for c in colunas_categoricas_filtro if c in filtros_ativos and len(filtros_ativos[c]) > 0]
+    
+    if len(active_categorical_filters) == 1:
+        col = active_categorical_filters[0]
+        # E verifica se a coluna é uma chave e tem apenas uma seleção
+        if col in key_filter_columns and len(filtros_ativos[col]) == 1:
+            single_key_filter = col
+            single_key_selection = filtros_ativos[col][0]
+
+    # 2. Exibição Dinâmica do Resumo
+    if single_key_filter and coluna_metrica_principal != 'Contagem de Registros' and coluna_metrica_principal in colunas_numericas_salvas and not df_analise.empty:
+        st.subheader(f"✨ Resumo Avançado para **{single_key_filter}: {single_key_selection}**")
+
+        # Métrica do Resumo
+        total_valor = df_analise[coluna_metrica_principal].sum()
+        media_valor = df_analise[coluna_metrica_principal].mean()
+        contagem = len(df_analise)
+        
+        col_kpi_1, col_kpi_2, col_kpi_3, _ = st.columns(4)
+        
+        col_kpi_1.metric("Total Acumulado (R$)", formatar_moeda(total_valor))
+        col_kpi_2.metric("Média por Registro (R$)", formatar_moeda(media_valor))
+        col_kpi_3.metric("Total de Registros", f"{contagem:,.0f}".replace(',', '.'))
+        
+        st.markdown("---")
+
+        # Tabela de Detalhamento por Outra Coluna Categórica
+        st.markdown(f"##### Detalhamento do Resumo por Fator de Agrupamento")
+        
+        # Encontra a próxima melhor coluna para detalhamento (exclui a coluna chave atual)
+        other_categorical_cols = [c for c in colunas_categoricas_filtro if c != single_key_filter]
+        
+        if other_categorical_cols:
+            
+            col_group_by_select, col_limit_select, _ = st.columns([3, 1, 2])
+            
+            with col_group_by_select:
+                coluna_detalhamento = st.selectbox(
+                    "Agrupar Detalhe Por:",
+                    options=other_categorical_cols,
+                    key='advanced_metric_group_by_select',
+                    index=0,
+                    help="Selecione a coluna para detalhar a composição do valor para o item selecionado acima."
+                )
+                
+            with col_limit_select:
+                top_n = st.number_input("Mostrar Top N:", min_value=1, max_value=100, value=10, key='advanced_metric_top_n')
+            
+            # --- Cálculo do Agrupamento ---
+            
+            # Adiciona 'Contagem de Registros' como coluna auxiliar para agg
+            # (Garantido que não exista, mas adicionado com segurança)
+            df_analise['Contagem de Registros'] = 1 
+            
+            df_group = df_analise.groupby(coluna_detalhamento, as_index=False).agg(
+                Total_Valor=(coluna_metrica_principal, 'sum'),
+                Media_Valor=(coluna_metrica_principal, 'mean'),
+                Contagem=('Contagem de Registros', 'size')
+            ).sort_values('Total_Valor', ascending=False).head(top_n)
+            
+            # Remove a coluna auxiliar
+            del df_analise['Contagem de Registros']
+
+            # Formata a tabela de resultado
+            df_group_display = df_group.copy()
+            df_group_display['Total_Valor'] = df_group_display['Total_Valor'].apply(formatar_moeda)
+            df_group_display['Media_Valor'] = df_group_display['Media_Valor'].apply(formatar_moeda)
+            df_group_display['Contagem'] = df_group_display['Contagem'].apply(lambda x: f"{x:,.0f}".replace(',', '.'))
+            
+            df_group_display.columns = [coluna_detalhamento, f'Total de {coluna_metrica_principal}', f'Média de {coluna_metrica_principal}', 'Registros']
+            
+            st.dataframe(df_group_display, use_container_width=True, hide_index=True)
+
+            # Opcional: Gráfico de Barra
+            st.caption(f"Visualização da distribuição do **Total de {coluna_metrica_principal}** por **{coluna_detalhamento}**.")
+            try:
+                # Usamos o df_group original com valores numéricos para o gráfico
+                fig_adv = px.bar(df_group, 
+                                 x=coluna_detalhamento, 
+                                 y='Total_Valor', 
+                                 title=f'Detalhe do Valor por {coluna_detalhamento}')
+                fig_adv.update_layout(title_x=0.5, margin=dict(t=50, b=50, l=50, r=50))
+                st.plotly_chart(fig_adv, use_container_width=True)
+                
+            except Exception as e:
+                st.warning(f"Não foi possível gerar o gráfico de detalhe: {e}")
+                
+        else:
+            st.info("Nenhuma outra coluna categórica disponível para detalhamento.")
+        
+        st.markdown("---") # Separador antes das KPIs padrão
+    
+    # ----------------------------------------------------
+    # MÉTRICAS (KPIs) - Padrão
     # ----------------------------------------------------
     
     st.subheader("🌟 Métricas Chave")
     
     col_metric_1, col_metric_2, col_metric_3, col_metric_4 = st.columns(4)
-    
-    coluna_metrica_principal = st.session_state.get('metrica_principal_selectbox')
     
     if coluna_metrica_principal != 'Contagem de Registros' and coluna_metrica_principal in colunas_numericas_salvas and not df_analise.empty:
         total_valor = df_analise[coluna_metrica_principal].sum()
@@ -608,7 +794,7 @@ else:
                     else:
                          st.warning("Selecione Coluna de Valor Numérica para Histograma.")
             
-            
+                
                 if fig:
                     fig.update_layout(hovermode="x unified", title_x=0.5, margin=dict(t=50, b=50, l=50, r=50)) 
                     st.plotly_chart(fig, use_container_width=True)
@@ -659,53 +845,24 @@ else:
                         
                 elif tipo_grafico_2 == 'Relação (Dispersão)':
                     if len(colunas_numericas_salvas) > 1 and coluna_y_fixa != 'Contagem de Registros':
-                        colunas_para_dispersao = [c for c in colunas_numericas_salvas if c != coluna_y_fixa]
-                        if colunas_para_dispersao:
-                            coluna_x_disp = st.selectbox("Selecione o Eixo X para Dispersão:", options=colunas_para_dispersao, key='col_x_disp')
-                            fig = px.scatter(df_analise, x=coluna_x_disp, y=coluna_y_fixa, title=f'Relação entre {coluna_x_disp} e {coluna_y_fixa}')
-                        else:
-                             st.warning("Necessário outra coluna numérica além da Métrica Principal para Dispersão.")
+                        # Se houver mais de uma coluna numérica, permite selecionar a segunda
+                        colunas_numericas_disp = [c for c in colunas_numericas_salvas if c != coluna_y_fixa]
+                        coluna_x_dispersao = st.selectbox("Eixo X para Dispersão:", options=colunas_numericas_disp, key='dispersao_eixo_x')
+                        
+                        fig = px.scatter(df_analise, 
+                                         x=coluna_x_dispersao, 
+                                         y=coluna_y_fixa, 
+                                         color=coluna_x_fixa if coluna_x_fixa != 'Nenhuma Chave Categórica Encontrada' else None, 
+                                         title=f'Relação entre {coluna_x_dispersao} e {coluna_y_fixa}')
                     else:
-                        st.warning("Necessário mais de uma coluna numérica para Gráfico de Dispersão.")
-
+                        st.warning("É necessário ter pelo menos duas colunas numéricas para o Gráfico de Dispersão.")
 
                 if fig:
                     fig.update_layout(hovermode="x unified", title_x=0.5, margin=dict(t=50, b=50, l=50, r=50))
                     st.plotly_chart(fig, use_container_width=True)
-                    
+
             except Exception as e:
                 st.error(f"Erro ao gerar o Gráfico 2. Erro: {e}")
-                
+
         else:
-            st.warning("O DataFrame está vazio após a aplicação dos filtros.")
-
-    # --- Tabela Detalhada (Otimizada) ---
-    st.markdown("---")
-    st.subheader("🔍 Detalhes dos Dados Filtrados")
-    
-    df_exibicao = df_analise.copy()
-    
-    # Formatação de Moeda
-    for col in colunas_numericas_salvas: 
-        if col in df_exibicao.columns:
-            if any(word in col.lower() for word in ['valor', 'salario', 'custo', 'receita']):
-                df_exibicao[col] = df_exibicao[col].apply(formatar_moeda)
-    
-    # CHAVE DE OTIMIZAÇÃO: LIMITAR O NÚMERO DE LINHAS EXIBIDAS
-    max_linhas_exibidas = 1000
-    if len(df_exibicao) > max_linhas_exibidas:
-        df_exibicao_limitado = df_exibicao.head(max_linhas_exibidas)
-        st.info(f"Exibindo apenas as primeiras {max_linhas_exibidas} linhas para evitar travamento. Baixe o CSV para ver todos os {len(df_exibicao)} registros.")
-    else:
-        df_exibicao_limitado = df_exibicao
-        
-    st.dataframe(df_exibicao_limitado, use_container_width=True, hide_index=True)
-
-    # Botão de download (usa o DF COMPLETO)
-    csv_data = df_analise.to_csv(index=False, sep=';', decimal=',', encoding='utf-8')
-    st.download_button(
-        label="📥 Baixar Dados Tratados (CSV)",
-        data=csv_data,
-        file_name=f'dados_analise_exportados_{datetime.now().strftime("%Y%m%d_%H%M")}.csv',
-        mime='text/csv',
-    )
+            st.warning("Dados não carregados.")
