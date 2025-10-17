@@ -14,13 +14,6 @@ def formatar_moeda(valor):
         return ''
     return f'R$ {valor:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
 
-@st.cache_data
-def formatar_numero(valor):
-     if pd.isna(valor):
-         return ''
-     # Formatação de milhares sem casas decimais
-     return f'{int(valor):,}'.replace(',', 'X').replace('.', ',').replace('X', '.')
-     
 def limpar_filtros_salvos():
     """Limpa TODAS as chaves de persistência dos filtros e reseta o trigger."""
     if 'df_filtrado' in st.session_state:
@@ -41,19 +34,29 @@ def limpar_filtros_salvos():
         except:
             pass
 
-# --- FUNÇÕES DE CALLBACK E ESTADO (MANTIDAS APENAS PARA OS FILTROS DO DASHBOARD) ---
+# --- FUNÇÕES DE CALLBACK E ESTADO ---
 
-def set_multiselect_all(col, options):
+def set_multiselect_all(key):
     """Callback para definir a seleção de um multiselect para TODAS as opções salvas e forçar rerun."""
-    # Garante que a chave do filtro seja definida para todas as opções
-    st.session_state[f'filtro_key_{col}'] = options
+    all_options_key = f'all_{key}_options'
+    st.session_state[key] = st.session_state.get(all_options_key, [])
     st.rerun() 
 
-def set_multiselect_none(col):
+def set_multiselect_none(key):
     """Callback para limpar a seleção de um multiselect (NENHUMA opção) e forçar rerun."""
-    st.session_state[f'filtro_key_{col}'] = []
+    st.session_state[key] = []
     st.rerun()
         
+def initialize_widget_state(key, options, initial_default_calc):
+    """Inicializa as chaves de estado de sessão para multiselect."""
+    all_options_key = f'all_{key}_options'
+    
+    st.session_state[all_options_key] = options
+    
+    # O valor inicial é definido APENAS se a chave não existir
+    if key not in st.session_state:
+        st.session_state[key] = initial_default_calc
+    
 def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor):
     """Salva o DataFrame processado e as colunas de filtro/valor na sessão."""
     st.session_state.dados_atuais = df_novo 
@@ -72,7 +75,7 @@ def inferir_e_converter_tipos(df, colunas_texto=None, colunas_moeda=None):
         for col in colunas_moeda:
             if col in df_copy.columns:
                 try:
-                    # Remove R$, ponto de milhar e substitui vírgula decimal por ponto
+                    # Limpeza e conversão robusta
                     s = df_copy[col].astype(str).str.replace(r'[R$]', '', regex=True).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
                     df_copy[col] = pd.to_numeric(s, errors='coerce').astype('float64')
                 except Exception:
@@ -174,32 +177,71 @@ with st.sidebar:
             # --- AJUSTE DE TIPOS E SELEÇÃO MANUAL DE COLUNAS ---
             st.subheader("🛠️ Configuração de Colunas")
             
-            # Heurística inicial para Moeda
+            # Heurística inicial
             moeda_default = [col for col in colunas_disponiveis if any(word in col.lower() for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
             
-            # --------------------- COLUNAS MOEDA (VOLTA AO SIMPLES) ---------------------
+            # --- 1. Inicializa Estado para Moeda, Texto e Filtros (apenas no novo upload) ---
+            if uploaded_file is not None and ('_last_uploaded_name' not in st.session_state or st.session_state._last_uploaded_name != uploaded_file.name):
+                
+                # Limpeza seletiva do estado para novo arquivo
+                keys_to_reset = ['moeda_select', 'texto_select', 'filtros_select']
+                for key in keys_to_reset:
+                     if key in st.session_state:
+                         del st.session_state[key]
+                
+                initialize_widget_state('moeda_select', colunas_disponiveis, moeda_default)
+                initialize_widget_state('texto_select', colunas_disponiveis, [])
+                st.session_state._last_uploaded_name = uploaded_file.name
+            
+            # Garante que os estados existam antes de serem usados, mesmo que o bloco acima não rode
+            if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', colunas_disponiveis, moeda_default)
+            if 'texto_select' not in st.session_state: initialize_widget_state('texto_select', colunas_disponiveis, [])
+
+
+            # --------------------- COLUNAS MOEDA ---------------------
             st.markdown("##### 💰 Colunas de VALOR (R$)")
+            
+            col_moeda_sel_btn, col_moeda_clr_btn = st.columns(2)
+            
+            with col_moeda_sel_btn:
+                st.button("✅ Selecionar Tudo", on_click=lambda: set_multiselect_all('moeda_select'), key='moeda_select_all_btn', use_container_width=True)
+
+            with col_moeda_clr_btn:
+                st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('moeda_select'), key='moeda_select_clear_btn', use_container_width=True)
+            
+            # Captura a seleção de colunas moeda
             colunas_moeda = st.multiselect(
                 "Selecione:", 
                 options=colunas_disponiveis, 
-                default=moeda_default,
-                label_visibility="collapsed",
-                key='moeda_select_config' # Nova chave para evitar conflito
+                default=st.session_state.moeda_select, 
+                key='moeda_select', 
+                label_visibility="collapsed"
             )
             st.markdown("---")
 
-            # --------------------- COLUNAS TEXTO (VOLTA AO SIMPLES) ---------------------
+            # --------------------- COLUNAS TEXTO ---------------------
             st.markdown("##### 📝 Colunas TEXTO/ID")
+            
+            col_texto_sel_btn, col_texto_clr_btn = st.columns(2)
+            
+            with col_texto_sel_btn:
+                st.button("✅ Selecionar Tudo", on_click=lambda: set_multiselect_all('texto_select'), key='texto_select_all_btn', use_container_width=True)
+
+            with col_texto_clr_btn:
+                st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('texto_select'), key='texto_select_clear_btn', use_container_width=True)
+            
+            # Captura a seleção de colunas texto
             colunas_texto = st.multiselect(
                 "Selecione:", 
                 options=colunas_disponiveis, 
-                default=[],
-                label_visibility="collapsed",
-                key='texto_select_config' # Nova chave para evitar conflito
+                default=st.session_state.texto_select,
+                key='texto_select',
+                label_visibility="collapsed"
             )
             st.markdown("---")
                                            
             # Realiza o processamento e a conversão de tipos (usando cache)
+            # PASSAMOS AS SELEÇÕES ATUAIS (colunas_moeda e colunas_texto)
             df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
             
             # SELEÇÃO MANUAL DAS COLUNAS DE FILTRO (Categóricas)
@@ -208,14 +250,27 @@ with st.sidebar:
             # Heurística inicial para filtros
             filtro_default = [c for c in colunas_para_filtro_options if c.lower() in ['tipo', 'situacao', 'empresa', 'departamento']]
 
-            # --------------------- COLUNAS FILTROS (VOLTA AO SIMPLES) ---------------------
+            # --- 2. Inicializa Estado para Filtros (depende de df_processado) ---
+            if 'filtros_select' not in st.session_state:
+                initialize_widget_state('filtros_select', colunas_para_filtro_options, filtro_default)
+            
+            # --------------------- COLUNAS FILTROS ---------------------
             st.markdown("##### ⚙️ Colunas para FILTROS")
+            
+            col_filtro_sel_btn, col_filtro_clr_btn = st.columns(2)
+            
+            with col_filtro_sel_btn:
+                st.button("✅ Selecionar Tudo", on_click=lambda: set_multiselect_all('filtros_select'), key='filtros_select_all_btn', use_container_width=True)
+
+            with col_filtro_clr_btn:
+                st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('filtros_select'), key='filtros_select_clear_btn', use_container_width=True)
+            
             colunas_para_filtro = st.multiselect(
                 "Selecione:",
                 options=colunas_para_filtro_options,
-                default=filtro_default,
-                label_visibility="collapsed",
-                key='filtros_select_config' # Nova chave para evitar conflito
+                default=st.session_state.filtros_select,
+                key='filtros_select',
+                label_visibility="collapsed"
             )
             
             # Encontra as colunas NUMÉRICAS REAIS APÓS A CONVERSÃO
@@ -233,7 +288,7 @@ with st.sidebar:
                     sucesso, df_processado_salvo = processar_dados_atuais( 
                         df_processado, 
                         colunas_para_filtro, 
-                        colunas_valor_dashboard 
+                        colunas_valor_dashboard # AGORA ESSA LISTA CONTÉM AS COLUNAS MOEDA CORRETAMENTE CONVERTIDAS
                     )
                     
                     if sucesso:
@@ -270,12 +325,14 @@ else:
     # CONTROLES GERAIS (MÉTRICA E RESET) - OTIMIZAÇÃO VISUAL
     # ----------------------------------------------------
     
+    # Reduzindo o tamanho do seletor de métrica
     col_metrica_select, _, col_reset_btn = st.columns([2, 2, 1])
     
     with col_metrica_select:
         colunas_valor_metricas = ['Contagem de Registros'] + colunas_numericas_salvas 
         default_metric_index = 0
         
+        # Tenta encontrar a coluna principal anterior, se não, usa a primeira numérica
         if 'metrica_principal_selectbox' in st.session_state and st.session_state.metrica_principal_selectbox in colunas_valor_metricas:
             default_metric_index = colunas_valor_metricas.index(st.session_state.metrica_principal_selectbox)
         elif coluna_valor_principal and coluna_valor_principal in colunas_valor_metricas:
@@ -284,6 +341,7 @@ else:
             except ValueError:
                 pass
                 
+        # st.selectbox é colocado em uma coluna menor para parecer visualmente atraente
         coluna_metrica_principal = st.selectbox(
             "Métrica de Valor Principal para KPI e Gráficos:",
             options=colunas_valor_metricas,
@@ -301,7 +359,7 @@ else:
     st.markdown("---") 
         
     # ----------------------------------------------------
-    # FILTROS DE ANÁLISE (Otimizado com 3 Expanders por linha e Botões Selecionar Tudo)
+    # FILTROS DE ANÁLISE (Otimizado com 3 Expanders por linha)
     # ----------------------------------------------------
     
     st.markdown("#### 🔍 Filtros de Análise Rápida")
@@ -314,6 +372,7 @@ else:
         
         colunas_filtro_a_exibir = colunas_categoricas_filtro 
         
+        # Otimização: Usaremos 3 colunas para organizar os expanders
         cols_container = st.columns(3) 
         
         # Lógica para distribuir os filtros em 3 colunas
@@ -321,62 +380,45 @@ else:
         filtros_col_2 = colunas_filtro_a_exibir[1::3]
         filtros_col_3 = colunas_filtro_a_exibir[2::3]
         
-        # Função interna para renderizar o filtro com botões (para DRY e callbacks)
-        def render_filter_with_buttons(col, container):
-            if col not in df_analise_base.columns: return
-
-            opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
-            
-            with container.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
-                
-                # --- Botões Selecionar/Limpar (USAM OS CALLBACKS set_multiselect_all/none) ---
-                col_sel, col_clr = st.columns(2)
-                with col_sel:
-                    # O CALLBACK set_multiselect_all SALVA A SELEÇÃO NO session_state E FORÇA UM RERUN
-                    st.button("✅ Selecionar Tudo", 
-                              on_click=set_multiselect_all, 
-                              args=(col, opcoes_unicas), 
-                              key=f'sel_all_{col}_{st.session_state.filtro_reset_trigger}', 
-                              use_container_width=True)
-                with col_clr:
-                    # O CALLBACK set_multiselect_none LIMPA A SELEÇÃO NO session_state E FORÇA UM RERUN
-                    st.button("🗑️ Limpar", 
-                              on_click=set_multiselect_none, 
-                              args=(col,), 
-                              key=f'clr_{col}_{st.session_state.filtro_reset_trigger}', 
-                              use_container_width=True)
-                st.markdown("---")
-                
-                # Inicializa o estado se for a primeira vez
-                if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
-                
-                # Usa o estado salvo para o default (importante para o rerun dos callbacks)
-                selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
-                multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
-                
-                selecao = st.multiselect("Selecione:", 
-                                         options=opcoes_unicas, 
-                                         default=selecao_padrao_form, 
-                                         key=multiselect_key, 
-                                         label_visibility="collapsed")
-                
-                current_selections[col] = selecao 
-
         # Renderiza a primeira coluna de filtros
         with cols_container[0]:
             for col in filtros_col_1:
-                render_filter_with_buttons(col, cols_container[0])
+                if col not in df_analise_base.columns: continue
+                opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
+                with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
+                    if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
+                    selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
+                    multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
+                    
+                    selecao = st.multiselect("Selecione:", options=opcoes_unicas, default=selecao_padrao_form, key=multiselect_key, label_visibility="collapsed")
+                    current_selections[col] = selecao 
 
         # Renderiza a segunda coluna de filtros
         with cols_container[1]:
              for col in filtros_col_2:
-                render_filter_with_buttons(col, cols_container[1])
+                if col not in df_analise_base.columns: continue
+                opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
+                with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
+                    if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
+                    selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
+                    multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
+                    
+                    selecao = st.multiselect("Selecione:", options=opcoes_unicas, default=selecao_padrao_form, key=multiselect_key, label_visibility="collapsed")
+                    current_selections[col] = selecao 
                     
         # Renderiza a terceira coluna de filtros
         with cols_container[2]:
              for col in filtros_col_3:
-                render_filter_with_buttons(col, cols_container[2])
-                
+                if col not in df_analise_base.columns: continue
+                opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
+                with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
+                    if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
+                    selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
+                    multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
+                    
+                    selecao = st.multiselect("Selecione:", options=opcoes_unicas, default=selecao_padrao_form, key=multiselect_key, label_visibility="collapsed")
+                    current_selections[col] = selecao 
+
         
         # Filtro de Data (Se houver) 
         if colunas_data:
@@ -420,18 +462,22 @@ else:
         st.rerun() 
 
     # ----------------------------------------------------
-    # APLICAÇÃO DA FILTRAGEM
+    # APLICAÇÃO DA FILTRAGEM (Lógica do "Selecionar Tudo")
     # ----------------------------------------------------
     
+    # Cache garantido. O cache é invalidado apenas se os argumentos mudarem.
     @st.cache_data(show_spinner="Aplicando filtros...")
     def aplicar_filtros(df_base, col_filtros, filtros_ativos, col_data, data_range_ativo):
+        # Evitar cópia desnecessária se não houver filtro a aplicar (maior otimização)
         filtro_aplicado = False
         df_filtrado_temp = df_base
         
         for col in col_filtros:
             selecao = filtros_ativos.get(col)
             
+            # Se a seleção tem itens, aplica o filtro.
             if selecao is not None and len(selecao) > 0 and col in df_filtrado_temp.columns: 
+                # Cópia só é feita se houver filtro
                 if not filtro_aplicado:
                     df_filtrado_temp = df_base.copy()
                     filtro_aplicado = True
@@ -439,6 +485,7 @@ else:
                 df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
                 
         if data_range_ativo and len(data_range_ativo) == 2 and col_data and col_data[0] in df_filtrado_temp.columns:
+            # Cópia só é feita se houver filtro
             if not filtro_aplicado:
                 df_filtrado_temp = df_base.copy()
                 filtro_aplicado = True
@@ -449,6 +496,7 @@ else:
                 (df_filtrado_temp[col_data_padrao] <= pd.to_datetime(data_range_ativo[1]))
             ]
         
+        # Se nenhum filtro foi aplicado, retorna o DF base (sem cópia)
         if not filtro_aplicado:
              return df_base
              
@@ -458,7 +506,7 @@ else:
     filtros_ativos = {}
     for col in colunas_categoricas_filtro:
         selecao = st.session_state.get(f'filtro_key_{col}')
-        if selecao is not None and len(selecao) > 0:
+        if selecao is not None:
              filtros_ativos[col] = selecao
             
     data_range_ativo = st.session_state.get(f'date_range_key_{colunas_data[0]}', None) if colunas_data else None
@@ -478,28 +526,7 @@ else:
     st.markdown("---")
     
     # ----------------------------------------------------
-    # LÓGICA DE APROFUNDAMENTO DINÂMICO
-    # ----------------------------------------------------
-    
-    # Encontra o filtro mais restrito (A Chave de Aprofundamento)
-    chave_aprofundamento = None
-    valor_aprofundamento = None
-    
-    # Lista de colunas que têm APENAS UM item selecionado (para foco)
-    filtros_focados = []
-    for col, selecao in filtros_ativos.items():
-        if len(selecao) == 1:
-            filtros_focados.append((col, selecao[0]))
-    
-    # Escolhe a primeira coluna focada como a Chave de Aprofundamento
-    if filtros_focados:
-        chave_aprofundamento, valor_aprofundamento = filtros_focados[0]
-        
-    # Coluna numérica para o resumo (Total de Salário/Valor)
-    col_resumo_valor = coluna_valor_principal if coluna_valor_principal != 'Contagem de Registros' else None
-
-    # ----------------------------------------------------
-    # MÉTRICAS CHAVE (Gerais)
+    # MÉTRICAS (KPIs) 
     # ----------------------------------------------------
     
     st.subheader("🌟 Métricas Chave")
@@ -508,89 +535,30 @@ else:
     
     coluna_metrica_principal = st.session_state.get('metrica_principal_selectbox')
     
-    if not df_analise.empty:
+    if coluna_metrica_principal != 'Contagem de Registros' and coluna_metrica_principal in colunas_numericas_salvas and not df_analise.empty:
+        total_valor = df_analise[coluna_metrica_principal].sum()
+        col_metric_1.metric(f"Total Acumulado", formatar_moeda(total_valor), help=f"Soma total da coluna: {coluna_metrica_principal}")
+        media_valor = df_analise[coluna_metrica_principal].mean()
+        col_metric_2.metric(f"Média por Registro", formatar_moeda(media_valor))
         contagem = len(df_analise)
-        col_metric_3.metric("Registros Filtrados", formatar_numero(contagem))
+        col_metric_3.metric("Registros Filtrados", f"{contagem:,.0f}".replace(',', '.'))
         col_metric_4.metric("Col. Principal", coluna_metrica_principal)
         
-        if coluna_metrica_principal != 'Contagem de Registros' and coluna_metrica_principal in colunas_numericas_salvas:
-            total_valor = df_analise[coluna_metrica_principal].sum()
-            col_metric_1.metric(f"Total Acumulado", formatar_moeda(total_valor), help=f"Soma total da coluna: {coluna_metrica_principal}")
-            media_valor = df_analise[coluna_metrica_principal].mean()
-            col_metric_2.metric(f"Média por Registro", formatar_moeda(media_valor))
-        else:
-            col_metric_1.metric("Total Acumulado", formatar_numero(contagem))
-            col_metric_2.metric("Média por Registro", "N/A - Contagem") 
-            
+    elif not df_analise.empty:
+        contagem = len(df_analise)
+        col_metric_1.metric("Total Acumulado (Contagem)", f"{contagem:,.0f}".replace(',', '.'))
+        col_metric_2.metric("Média por Registro: N/A", "R$ 0,00") 
+        col_metric_3.metric("Registros Filtrados", f"{contagem:,.0f}".replace(',', '.'))
+        col_metric_4.metric("Col. Principal", "Contagem")
+        
     else:
         col_metric_1.warning("Dados não carregados ou vazios.")
-        st.markdown("---")
 
 
-    # ----------------------------------------------------
-    # MÉTRICAS AVANÇADAS (Aprofundamento Dinâmico)
-    # ----------------------------------------------------
-
-    if chave_aprofundamento and col_resumo_valor and not df_analise.empty:
-        st.markdown("---")
-        st.subheader(f"🧠 Análise Focada: {valor_aprofundamento} ({chave_aprofundamento})")
-        
-        df_foco = df_analise.copy()
-        
-        # 1. KPIs Focados
-        contagem_foco = len(df_foco)
-        total_foco = df_foco[col_resumo_valor].sum()
-        media_foco = df_foco[col_resumo_valor].mean()
-        
-        col_foco_1, col_foco_2, col_foco_3, col_foco_4 = st.columns(4)
-        
-        col_foco_1.metric(f"Contagem em '{chave_aprofundamento}'", formatar_numero(contagem_foco))
-        col_foco_2.metric(f"Total de {col_resumo_valor}", formatar_moeda(total_foco))
-        col_foco_3.metric(f"Média de {col_resumo_valor}", formatar_moeda(media_foco))
-        col_foco_4.metric(f"Outros Filtros Ativos", str(len(filtros_ativos) - len(filtros_focados)))
-        
-        st.markdown("---")
-        
-        # 2. Resumo por Sub-Agrupamento
-        
-        # Encontra a próxima coluna categórica mais relevante
-        colunas_restantes = [c for c in colunas_categoricas_filtro if c != chave_aprofundamento]
-        
-        if colunas_restantes:
-            col_sub_agrupamento = colunas_restantes[0]
-            st.markdown(f"##### Detalhe por {col_sub_agrupamento}")
-
-            # Agregação por Sub-Agrupamento
-            df_resumo = df_foco.groupby(col_sub_agrupamento).agg(
-                Contagem=('index', 'size'),
-                Total_Valor=(col_resumo_valor, 'sum'),
-                Media_Valor=(col_resumo_valor, 'mean')
-            ).reset_index()
-            
-            # Ordenar pela maior Contagem ou Total
-            df_resumo = df_resumo.sort_values(by='Total_Valor', ascending=False)
-            
-            # Formatação para exibição
-            df_resumo['Total_Valor'] = df_resumo['Total_Valor'].apply(formatar_moeda)
-            df_resumo['Media_Valor'] = df_resumo['Media_Valor'].apply(formatar_moeda)
-            
-            # Renomear colunas
-            df_resumo.columns = [col_sub_agrupamento, 'Contagem', f'Total de {col_resumo_valor}', f'Média de {col_resumo_valor}']
-            
-            st.dataframe(df_resumo, use_container_width=True, hide_index=True)
-            
-        else:
-            st.info(f"Nenhuma outra coluna de filtro disponível para detalhar {valor_aprofundamento}.")
-
-    elif len(df_analise) < len(df_analise_base):
-        st.markdown("---")
-        st.info("Para ativar a **Análise Focada**, selecione **apenas um valor** em um dos filtros (ex: apenas 'Empresa X').")
-
-    
     st.markdown("---")
     
     # ----------------------------------------------------
-    # GRÁFICOS (Sem Alteração) 
+    # GRÁFICOS 
     # ----------------------------------------------------
     
     st.subheader("📈 Análise Visual (Gráficos) ")
@@ -717,23 +685,23 @@ else:
     
     df_exibicao = df_analise.copy()
     
-    # Cria uma cópia e aplica a formatação APENAS nas colunas de moeda identificadas, para o dataframe de exibição
-    df_exibicao_formatado = df_exibicao.copy()
-    for col in colunas_numericas_salvas:
-         if col in df_exibicao_formatado.columns and any(word in col.lower() for word in ['valor', 'salario', 'custo', 'receita', 'montante']):
-            df_exibicao_formatado[col] = df_exibicao_formatado[col].apply(formatar_moeda)
-
+    # Formatação de Moeda
+    for col in colunas_numericas_salvas: 
+        if col in df_exibicao.columns:
+            if any(word in col.lower() for word in ['valor', 'salario', 'custo', 'receita']):
+                df_exibicao[col] = df_exibicao[col].apply(formatar_moeda)
+    
     # CHAVE DE OTIMIZAÇÃO: LIMITAR O NÚMERO DE LINHAS EXIBIDAS
     max_linhas_exibidas = 1000
-    if len(df_exibicao_formatado) > max_linhas_exibidas:
-        df_exibicao_limitado = df_exibicao_formatado.head(max_linhas_exibidas)
-        st.info(f"Exibindo apenas as primeiras {max_linhas_exibidas} linhas para evitar travamento. Baixe o CSV para ver todos os {len(df_exibicao_formatado)} registros.")
+    if len(df_exibicao) > max_linhas_exibidas:
+        df_exibicao_limitado = df_exibicao.head(max_linhas_exibidas)
+        st.info(f"Exibindo apenas as primeiras {max_linhas_exibidas} linhas para evitar travamento. Baixe o CSV para ver todos os {len(df_exibicao)} registros.")
     else:
-        df_exibicao_limitado = df_exibicao_formatado
+        df_exibicao_limitado = df_exibicao
         
     st.dataframe(df_exibicao_limitado, use_container_width=True, hide_index=True)
 
-    # Botão de download (usa o DF COMPLETO, NÃO FORMATADO)
+    # Botão de download (usa o DF COMPLETO)
     csv_data = df_analise.to_csv(index=False, sep=';', decimal=',', encoding='utf-8')
     st.download_button(
         label="📥 Baixar Dados Tratados (CSV)",
