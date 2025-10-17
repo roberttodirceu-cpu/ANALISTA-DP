@@ -41,7 +41,7 @@ def limpar_filtros_salvos():
         except:
             pass
 
-# --- FUNÇÕES DE CALLBACK E ESTADO ---
+# --- FUNÇÕES DE CALLBACK E ESTADO (MANTIDAS APENAS PARA OS FILTROS DO DASHBOARD) ---
 
 def set_multiselect_all(col, options):
     """Callback para definir a seleção de um multiselect para TODAS as opções salvas e forçar rerun."""
@@ -54,16 +54,6 @@ def set_multiselect_none(col):
     st.session_state[f'filtro_key_{col}'] = []
     st.rerun()
         
-def initialize_widget_state(key, options, initial_default_calc):
-    """Inicializa as chaves de estado de sessão para multiselect."""
-    all_options_key = f'all_{key}_options'
-    
-    st.session_state[all_options_key] = options
-    
-    # O valor inicial é definido APENAS se a chave não existir
-    if key not in st.session_state:
-        st.session_state[key] = initial_default_calc
-    
 def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor):
     """Salva o DataFrame processado e as colunas de filtro/valor na sessão."""
     st.session_state.dados_atuais = df_novo 
@@ -82,6 +72,7 @@ def inferir_e_converter_tipos(df, colunas_texto=None, colunas_moeda=None):
         for col in colunas_moeda:
             if col in df_copy.columns:
                 try:
+                    # Remove R$, ponto de milhar e substitui vírgula decimal por ponto
                     s = df_copy[col].astype(str).str.replace(r'[R$]', '', regex=True).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
                     df_copy[col] = pd.to_numeric(s, errors='coerce').astype('float64')
                 except Exception:
@@ -183,71 +174,32 @@ with st.sidebar:
             # --- AJUSTE DE TIPOS E SELEÇÃO MANUAL DE COLUNAS ---
             st.subheader("🛠️ Configuração de Colunas")
             
-            # Heurística inicial
+            # Heurística inicial para Moeda
             moeda_default = [col for col in colunas_disponiveis if any(word in col.lower() for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
             
-            # --- 1. Inicializa Estado para Moeda, Texto e Filtros (apenas no novo upload) ---
-            if uploaded_file is not None and ('_last_uploaded_name' not in st.session_state or st.session_state._last_uploaded_name != uploaded_file.name):
-                
-                # Limpeza seletiva do estado para novo arquivo
-                keys_to_reset = ['moeda_select', 'texto_select', 'filtros_select']
-                for key in keys_to_reset:
-                     if key in st.session_state:
-                         del st.session_state[key]
-                
-                initialize_widget_state('moeda_select', colunas_disponiveis, moeda_default)
-                initialize_widget_state('texto_select', colunas_disponiveis, [])
-                st.session_state._last_uploaded_name = uploaded_file.name
-            
-            # Garante que os estados existam antes de serem usados, mesmo que o bloco acima não rode
-            if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', colunas_disponiveis, moeda_default)
-            if 'texto_select' not in st.session_state: initialize_widget_state('texto_select', colunas_disponiveis, [])
-
-
-            # --------------------- COLUNAS MOEDA ---------------------
+            # --------------------- COLUNAS MOEDA (VOLTA AO SIMPLES) ---------------------
             st.markdown("##### 💰 Colunas de VALOR (R$)")
-            
-            col_moeda_sel_btn, col_moeda_clr_btn = st.columns(2)
-            
-            with col_moeda_sel_btn:
-                st.button("✅ Selecionar Tudo", on_click=lambda: set_multiselect_all('moeda_select', colunas_disponiveis), key='moeda_select_all_btn', use_container_width=True)
-
-            with col_moeda_clr_btn:
-                st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('moeda_select'), key='moeda_select_clear_btn', use_container_width=True)
-            
-            # Captura a seleção de colunas moeda
             colunas_moeda = st.multiselect(
                 "Selecione:", 
                 options=colunas_disponiveis, 
-                default=st.session_state.moeda_select, 
-                key='moeda_select', 
-                label_visibility="collapsed"
+                default=moeda_default,
+                label_visibility="collapsed",
+                key='moeda_select_config' # Nova chave para evitar conflito
             )
             st.markdown("---")
 
-            # --------------------- COLUNAS TEXTO ---------------------
+            # --------------------- COLUNAS TEXTO (VOLTA AO SIMPLES) ---------------------
             st.markdown("##### 📝 Colunas TEXTO/ID")
-            
-            col_texto_sel_btn, col_texto_clr_btn = st.columns(2)
-            
-            with col_texto_sel_btn:
-                st.button("✅ Selecionar Tudo", on_click=lambda: set_multiselect_all('texto_select', colunas_disponiveis), key='texto_select_all_btn', use_container_width=True)
-
-            with col_texto_clr_btn:
-                st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('texto_select'), key='texto_select_clear_btn', use_container_width=True)
-            
-            # Captura a seleção de colunas texto
             colunas_texto = st.multiselect(
                 "Selecione:", 
                 options=colunas_disponiveis, 
-                default=st.session_state.texto_select,
-                key='texto_select',
-                label_visibility="collapsed"
+                default=[],
+                label_visibility="collapsed",
+                key='texto_select_config' # Nova chave para evitar conflito
             )
             st.markdown("---")
                                            
             # Realiza o processamento e a conversão de tipos (usando cache)
-            # PASSAMOS AS SELEÇÕES ATUAIS (colunas_moeda e colunas_texto)
             df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
             
             # SELEÇÃO MANUAL DAS COLUNAS DE FILTRO (Categóricas)
@@ -256,27 +208,14 @@ with st.sidebar:
             # Heurística inicial para filtros
             filtro_default = [c for c in colunas_para_filtro_options if c.lower() in ['tipo', 'situacao', 'empresa', 'departamento']]
 
-            # --- 2. Inicializa Estado para Filtros (depende de df_processado) ---
-            if 'filtros_select' not in st.session_state:
-                initialize_widget_state('filtros_select', colunas_para_filtro_options, filtro_default)
-            
-            # --------------------- COLUNAS FILTROS ---------------------
+            # --------------------- COLUNAS FILTROS (VOLTA AO SIMPLES) ---------------------
             st.markdown("##### ⚙️ Colunas para FILTROS")
-            
-            col_filtro_sel_btn, col_filtro_clr_btn = st.columns(2)
-            
-            with col_filtro_sel_btn:
-                st.button("✅ Selecionar Tudo", on_click=lambda: set_multiselect_all('filtros_select', colunas_para_filtro_options), key='filtros_select_all_btn', use_container_width=True)
-
-            with col_filtro_clr_btn:
-                st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('filtros_select'), key='filtros_select_clear_btn', use_container_width=True)
-            
             colunas_para_filtro = st.multiselect(
                 "Selecione:",
                 options=colunas_para_filtro_options,
-                default=st.session_state.filtros_select,
-                key='filtros_select',
-                label_visibility="collapsed"
+                default=filtro_default,
+                label_visibility="collapsed",
+                key='filtros_select_config' # Nova chave para evitar conflito
             )
             
             # Encontra as colunas NUMÉRICAS REAIS APÓS A CONVERSÃO
@@ -362,7 +301,7 @@ else:
     st.markdown("---") 
         
     # ----------------------------------------------------
-    # FILTROS DE ANÁLISE (Otimizado com 3 Expanders por linha)
+    # FILTROS DE ANÁLISE (Otimizado com 3 Expanders por linha e Botões Selecionar Tudo)
     # ----------------------------------------------------
     
     st.markdown("#### 🔍 Filtros de Análise Rápida")
@@ -390,15 +329,17 @@ else:
             
             with container.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
                 
-                # --- NOVIDADE: Botões Selecionar/Limpar ---
+                # --- Botões Selecionar/Limpar (USAM OS CALLBACKS set_multiselect_all/none) ---
                 col_sel, col_clr = st.columns(2)
                 with col_sel:
+                    # O CALLBACK set_multiselect_all SALVA A SELEÇÃO NO session_state E FORÇA UM RERUN
                     st.button("✅ Selecionar Tudo", 
                               on_click=set_multiselect_all, 
                               args=(col, opcoes_unicas), 
                               key=f'sel_all_{col}_{st.session_state.filtro_reset_trigger}', 
                               use_container_width=True)
                 with col_clr:
+                    # O CALLBACK set_multiselect_none LIMPA A SELEÇÃO NO session_state E FORÇA UM RERUN
                     st.button("🗑️ Limpar", 
                               on_click=set_multiselect_none, 
                               args=(col,), 
@@ -479,7 +420,7 @@ else:
         st.rerun() 
 
     # ----------------------------------------------------
-    # APLICAÇÃO DA FILTRAGEM (Lógica do "Selecionar Tudo")
+    # APLICAÇÃO DA FILTRAGEM
     # ----------------------------------------------------
     
     @st.cache_data(show_spinner="Aplicando filtros...")
@@ -776,13 +717,6 @@ else:
     
     df_exibicao = df_analise.copy()
     
-    # Formatação de Moeda
-    for col in colunas_numericas_salvas: 
-        if col in df_exibicao.columns:
-            if any(word in col.lower() for word in ['valor', 'salario', 'custo', 'receita']):
-                # Remove a aplicação de formatar_moeda aqui para garantir a exibição do formato original antes do limite
-                pass 
-                
     # Cria uma cópia e aplica a formatação APENAS nas colunas de moeda identificadas, para o dataframe de exibição
     df_exibicao_formatado = df_exibicao.copy()
     for col in colunas_numericas_salvas:
