@@ -40,6 +40,7 @@ def limpar_filtros_salvos():
 
 def set_multiselect_all(key):
     all_options_key = f'all_{key}_options'
+    # Verifica se a chave de opções existe, caso contrário, usa uma lista vazia
     st.session_state[key] = st.session_state.get(all_options_key, [])
     st.rerun() 
 
@@ -148,7 +149,7 @@ with st.sidebar:
                         st.balloons()
                         limpar_filtros_salvos() 
                         st.session_state.df_filtrado = df_processado_salvo 
-                        st.rerun()  
+                        st.rerun() 
         except ValueError as ve:
              st.error(f"Erro de Validação: {ve}")
         except Exception as e:
@@ -199,12 +200,47 @@ else:
                 for col in filtros_col:
                     if col not in df_analise_base.columns: continue
                     opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
+                    
+                    # 1. Inicializa o estado com TODAS as opções salvas
+                    filtro_key = f'filtro_key_{col}'
+                    initialize_widget_state(filtro_key, opcoes_unicas, []) # Use [] para default ser nada selecionado
+                    
                     with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
-                        if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
-                        selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
+                        # --- NOVO: Botões Selecionar Tudo/Limpar ---
+                        col_sel_btn, col_clr_btn = st.columns(2)
+                        with col_sel_btn:
+                            # 2. BOTÃO SELECIONAR TUDO
+                            st.button(
+                                "✅ Selecionar Tudo", 
+                                on_click=lambda c=filtro_key: set_multiselect_all(c), # Chama a função com a chave do filtro
+                                key=f'select_all_btn_{col}_{st.session_state.filtro_reset_trigger}', # Chave única dentro do form
+                                use_container_width=True
+                            )
+                        with col_clr_btn:
+                            # 3. BOTÃO LIMPAR
+                            st.button(
+                                "🗑️ Limpar", 
+                                on_click=lambda c=filtro_key: set_multiselect_none(c), 
+                                key=f'select_none_btn_{col}_{st.session_state.filtro_reset_trigger}', 
+                                use_container_width=True
+                            )
+                        st.markdown("---") # Separador visual
+                        
+                        # O multiselect AGORA usa o valor de st.session_state[filtro_key] como default
+                        selecao_padrao_form = st.session_state.get(filtro_key, [])
                         multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
-                        selecao = st.multiselect("Selecione:", options=opcoes_unicas, default=selecao_padrao_form, key=multiselect_key, label_visibility="collapsed")
-                        current_selections[col] = selecao 
+                        
+                        selecao = st.multiselect(
+                            "Selecione:", 
+                            options=opcoes_unicas, 
+                            default=selecao_padrao_form, 
+                            key=multiselect_key, 
+                            label_visibility="collapsed"
+                        )
+                        current_selections[col] = selecao
+                        # Salva a seleção atual do multiselect na session state (mantém o estado após o rerun do botão)
+                        st.session_state[filtro_key] = selecao
+
         if colunas_data:
             st.markdown("---")
             col_data_padrao = colunas_data[0]
