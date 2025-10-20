@@ -27,11 +27,19 @@ if 'colunas_valor_salvas' not in st.session_state:
 if 'filtro_reset_trigger' not in st.session_state:
     st.session_state['filtro_reset_trigger'] = 0
     
-# CHAVE CRÍTICA: Armazena os dados dos arquivos subidos, garantindo persistência
+# CHAVE CRÍTICA PARA UPLOAD E CONSOLIDAÇÃO: Armazena os dados dos arquivos subidos, garantindo persistência
 if 'uploaded_files_data' not in st.session_state:
     st.session_state.uploaded_files_data = {} # Armazena {file_name: bytes_do_arquivo}
 
+# NOVA CHAVE: Armazena os DataFrames processados e as configurações de coluna
+if 'data_sets_catalog' not in st.session_state:
+    st.session_state.data_sets_catalog = {} # Armazena {nome_do_dataset: {'df': df, 'filtros': [], 'valores': []}}
+    
+if 'current_dataset_name' not in st.session_state:
+    st.session_state.current_dataset_name = ""
+
 def limpar_filtros_salvos():
+    # Limpa filtros de seleção, mas não os dados em si
     if 'df_filtrado' in st.session_state:
         del st.session_state['df_filtrado'] 
     if 'filtro_reset_trigger' not in st.session_state:
@@ -50,7 +58,6 @@ def limpar_filtros_salvos():
 
 def set_multiselect_all(key):
     all_options_key = f'all_{key}_options'
-    # Verifica se a chave de opções existe, caso contrário, usa uma lista vazia
     st.session_state[key] = st.session_state.get(all_options_key, [])
     st.rerun() 
 
@@ -64,19 +71,43 @@ def initialize_widget_state(key, options, initial_default_calc):
     if key not in st.session_state:
         st.session_state[key] = initial_default_calc
 
-def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor):
+def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name):
+    # Salva o resultado no catálogo
+    st.session_state.data_sets_catalog[dataset_name] = {
+        'df': df_novo,
+        'colunas_filtros_salvas': colunas_filtros,
+        'colunas_valor_salvas': colunas_valor,
+    }
+    # Define o novo catálogo como o conjunto de dados atual
     st.session_state.dados_atuais = df_novo 
     st.session_state.colunas_filtros_salvas = colunas_filtros
     st.session_state.colunas_valor_salvas = colunas_valor
+    st.session_state.current_dataset_name = dataset_name # Salva o nome do dataset ativo
     return True, df_novo
 
 # Ação para remover um arquivo da lista
 def remove_file(file_name):
     if file_name in st.session_state.uploaded_files_data:
         del st.session_state.uploaded_files_data[file_name]
-        # Limpar os dados processados para forçar uma nova consolidação
-        st.session_state.dados_atuais = pd.DataFrame()
+        # Se o arquivo removido era parte do dataset atual, reseta o dashboard
+        if st.session_state.current_dataset_name == file_name:
+            st.session_state.dados_atuais = pd.DataFrame()
+            st.session_state.current_dataset_name = ""
         st.rerun()
+
+# NOVA FUNÇÃO: Troca o dataset ativo
+def switch_dataset(dataset_name):
+    if dataset_name in st.session_state.data_sets_catalog:
+        data = st.session_state.data_sets_catalog[dataset_name]
+        st.session_state.dados_atuais = data['df']
+        st.session_state.colunas_filtros_salvas = data['colunas_filtros_salvas']
+        st.session_state.colunas_valor_salvas = data['colunas_valor_salvas']
+        st.session_state.current_dataset_name = dataset_name
+        limpar_filtros_salvos() # Reseta apenas os filtros de seleção
+        st.rerun()
+    else:
+        st.error(f"Dataset '{dataset_name}' não encontrado.")
+
 
 with st.sidebar:
     st.markdown("# 📊")
@@ -100,6 +131,10 @@ with st.sidebar:
             accept_multiple_files=True,
             key="file_uploader_widget" # Chave para o widget em si
         )
+        # O nome para o dataset consolidado (usa a data/hora para ser único)
+        default_dataset_name = f"Dataset Consolidado ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        dataset_name_input = st.text_input("Nome para o Dataset Processado:", value=default_dataset_name)
+        
         submit_upload = st.form_submit_button("Adicionar Arquivo(s) à Lista")
         
         if submit_upload and uploaded_files_new:
@@ -108,21 +143,19 @@ with st.sidebar:
                 # Armazena o conteúdo do arquivo como bytes para persistência
                 st.session_state.uploaded_files_data[file.name] = file.read()
                 newly_added.append(file.name)
-            st.success(f"Arquivos adicionados: {', '.join(newly_added)}")
+            st.success(f"Arquivos adicionados: {', '.join(newly_added)}. Clique em 'Processar' abaixo.")
             st.rerun()
 
-    # --- NOVO: Exibir e Remover Arquivos ---
+    # --- Exibir e Remover Arquivos ---
     if st.session_state.uploaded_files_data:
         st.markdown("---")
-        st.markdown("##### Arquivos Carregados para Processamento:")
+        st.markdown("##### Arquivos Pendentes para Processamento:")
         
         for file_name in st.session_state.uploaded_files_data.keys():
             col_file, col_remove = st.columns([4, 1])
             with col_file:
-                # Exibe o nome do arquivo
                 st.caption(f"- **{file_name}**")
             with col_remove:
-                # Botão de remoção com chave única, chamando a função de callback
                 st.button("Remover", 
                           key=f"remove_file_btn_{file_name}", 
                           on_click=remove_file, 
@@ -132,6 +165,7 @@ with st.sidebar:
         st.markdown("---")
 
     # --- Lógica de Processamento e Consolidação (Somente se houver arquivos) ---
+    df_novo = pd.DataFrame() # DataFrame consolidado
     
     if st.session_state.uploaded_files_data:
         
@@ -140,16 +174,13 @@ with st.sidebar:
         # Leitura e Concatenação dos Arquivos Armazenados
         for file_name, file_bytes in st.session_state.uploaded_files_data.items():
             try:
-                # Usa BytesIO para ler o conteúdo binário (bytes)
                 uploaded_file_stream = BytesIO(file_bytes)
                 
                 if file_name.endswith('.csv'):
                     try:
-                        # Tenta ler com o padrão brasileiro (separador=;, decimal=,)
                         df_temp = pd.read_csv(uploaded_file_stream, sep=';', decimal=',', encoding='utf-8')
                     except Exception:
                         uploaded_file_stream.seek(0)
-                        # Tenta ler com o padrão americano (separador=,, decimal=.)
                         df_temp = pd.read_csv(uploaded_file_stream, sep=',', decimal='.', encoding='utf-8')
                 elif file_name.endswith('.xlsx'):
                     df_temp = pd.read_excel(uploaded_file_stream)
@@ -158,9 +189,9 @@ with st.sidebar:
                     all_dataframes.append(df_temp)
                     
             except Exception as e:
-                st.error(f"Erro ao ler o arquivo {file_name} durante a consolidação. Verifique o formato: {e}")
+                #st.error(f"Erro ao ler o arquivo {file_name} durante a consolidação.")
+                pass # Ignora arquivos com erro de leitura na consolidação
 
-        # Consolida todos os dataframes válidos
         if all_dataframes:
             df_novo = pd.concat(all_dataframes, ignore_index=True)
         
@@ -173,10 +204,8 @@ with st.sidebar:
             colunas_disponiveis = df_novo.columns.tolist()
             st.info(f"Dados consolidados de {len(st.session_state.uploaded_files_data)} arquivos. Total de {len(df_novo)} linhas.")
             
-            # Sugestão de colunas de valor
+            # --- Seletores de Colunas (Reutiliza a lógica existente) ---
             moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
-            
-            # Inicialização segura dos seletores (para não perder o estado)
             if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', colunas_disponiveis, moeda_default)
             if 'texto_select' not in st.session_state: initialize_widget_state('texto_select', colunas_disponiveis, [])
             
@@ -215,43 +244,78 @@ with st.sidebar:
             colunas_valor_dashboard = df_processado.select_dtypes(include=np.number).columns.tolist()
             st.markdown("---")
             
+            # Botão de Processamento
             if st.button("✅ Processar e Exibir Dados Atuais"): 
                 if df_processado.empty:
-                    st.error("O DataFrame está vazio após o processamento. Verifique o conteúdo do arquivo e as seleções de coluna.")
+                    st.error("O DataFrame está vazio após o processamento.")
                 elif not colunas_para_filtro:
                     st.warning("Selecione pelo menos uma coluna na seção 'Colunas para FILTROS' para prosseguir.")
                 else:
-                    sucesso, df_processado_salvo = processar_dados_atuais(df_processado, colunas_para_filtro, colunas_valor_dashboard)
+                    sucesso, df_processado_salvo = processar_dados_atuais(df_processado, colunas_para_filtro, colunas_valor_dashboard, dataset_name_input)
                     if sucesso:
                         ausentes = verificar_ausentes(df_processado_salvo, colunas_para_filtro)
                         if ausentes:
                             for col, (n, t) in ausentes.items():
                                 st.warning(f"A coluna '{col}' possui {n} valores ausentes de {t}. O filtro pode não funcionar corretamente.")
-                        st.success("Dados processados e prontos para análise!")
+                        st.success(f"Dataset '{dataset_name_input}' processado e salvo no catálogo!")
+                        
+                        # Limpa os arquivos de upload após o processamento bem-sucedido
+                        st.session_state.uploaded_files_data = {} 
+                        
                         st.balloons()
                         limpar_filtros_salvos() 
-                        st.session_state.df_filtrado = df_processado_salvo 
                         st.rerun() 
             
         
     else: # Caso nenhum arquivo esteja carregado
-        st.info("Carregue um ou mais arquivos CSV/XLSX para iniciar o processamento.")
+        st.info("Carregue um ou mais arquivos CSV/XLSX para iniciar o processamento e salvamento do dataset.")
 
 
-# --- Início do Dashboard ---
+# --- Dashboard Principal ---
+
+st.markdown("---") 
+
+# NOVO: Geração dos Botões de Troca de Dataset
+if st.session_state.data_sets_catalog:
+    st.subheader("🔁 Datasets Salvos")
+    
+    # Criar colunas para os botões (até 4 por linha)
+    dataset_names = list(st.session_state.data_sets_catalog.keys())
+    cols = st.columns(min(len(dataset_names), 4))
+    
+    for i, name in enumerate(dataset_names):
+        is_active = name == st.session_state.current_dataset_name
+        
+        # Usa um estilo de botão diferente se estiver ativo
+        button_label = f"📁 {name}" if not is_active else f"✅ {name} (Atual)"
+        button_type = "primary" if is_active else "secondary"
+        
+        with cols[i % 4]:
+            st.button(
+                button_label,
+                key=f"dataset_switch_{name}",
+                on_click=switch_dataset,
+                args=(name,),
+                type=button_type,
+                use_container_width=True,
+                help=f"Clique para carregar e analisar o dataset '{name}'."
+            )
+    st.markdown("---") 
+
 
 if st.session_state.dados_atuais.empty: 
-    st.markdown("---")
-    st.info("Sistema pronto. O Dashboard será exibido após carregar dados e selecionar as Colunas para Filtro.")
+    st.info("Sistema pronto. O Dashboard será exibido após carregar, processar e selecionar um Dataset.")
 else:
     df_analise_base = st.session_state.dados_atuais 
-    st.header("📊 Dashboard Expert de Análise de Indicadores")
+    st.header(f"📊 Dashboard Expert de Análise de Indicadores ({st.session_state.current_dataset_name})")
     colunas_categoricas_filtro = st.session_state.colunas_filtros_salvas
     colunas_numericas_salvas = st.session_state.colunas_valor_salvas
     _, colunas_data = encontrar_colunas_tipos(df_analise_base) 
     coluna_valor_principal = colunas_numericas_salvas[0] if colunas_numericas_salvas else None
     coluna_agrupamento_principal = colunas_categoricas_filtro[0] if colunas_categoricas_filtro else None
 
+    # --- O RESTANTE DO CÓDIGO DO DASHBOARD PERMANECE INTACTO ---
+    
     col_metrica_select, _, col_reset_btn = st.columns([2, 2, 1])
     with col_metrica_select:
         colunas_valor_metricas = ['Contagem de Registros'] + colunas_numericas_salvas 
@@ -393,7 +457,7 @@ else:
     df_analise = aplicar_filtros(df_analise_base, colunas_categoricas_filtro, filtros_ativos, colunas_data, data_range_ativo)
     st.session_state.df_filtrado = df_analise
 
-    st.caption(f"Análise baseada em **{len(df_analise)}** registros filtrados do arquivo atual.") 
+    st.caption(f"Análise baseada em **{len(df_analise)}** registros filtrados do dataset **{st.session_state.current_dataset_name}**.") 
     st.markdown("---")
     st.subheader("🌟 Métricas Chave")
     col_metric_1, col_metric_2, col_metric_3, col_metric_4 = st.columns(4)
@@ -515,10 +579,6 @@ else:
         st.info(f"Exibindo apenas as primeiras {max_linhas_exibidas} linhas para evitar travamento. Baixe o CSV/XLSX para ver todos os {len(df_exibicao)} registros.")
     else:
         df_exibicao_limitado = df_exibicao
-
-    # --- Para tabelas interativas, pode ativar AgGrid ---
-    # from st_aggrid import AgGrid
-    # AgGrid(df_exibicao_limitado, fit_columns_on_grid_load=True)
 
     st.dataframe(df_exibicao_limitado, use_container_width=True, hide_index=True)
 
