@@ -193,47 +193,34 @@ else:
         filtros_col_1 = colunas_filtro_a_exibir[::3]
         filtros_col_2 = colunas_filtro_a_exibir[1::3]
         filtros_col_3 = colunas_filtro_a_exibir[2::3]
-        # --- SUBSTITUIR O BLOCO DOS FILTROS POR ESTE ---
+        # --- BLOCO DOS FILTROS CORRIGIDO PARA USAR CHECKBOXES DENTRO DO FORM ---
         for idx, filtros_col in enumerate([filtros_col_1, filtros_col_2, filtros_col_3]):
             with cols_container[idx]:
                 for col in filtros_col:
                     if col not in df_analise_base.columns: continue
                     opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
                     with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
-                        # Inicialização de estado
                         if f'filtro_key_{col}' not in st.session_state:
                             st.session_state[f'filtro_key_{col}'] = []
                         selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
                         multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
 
-                        # Botões Selecionar Todos / Limpar
                         col1_btn, col2_btn = st.columns([1, 1])
-                        with col1_btn:
-                            if st.button(
-                                "Selecionar Todos",
-                                key=f'select_all_{col}_{st.session_state.filtro_reset_trigger}',
-                                use_container_width=True
-                            ):
-                                st.session_state[multiselect_key] = opcoes_unicas
-                                st.session_state[f'filtro_key_{col}'] = opcoes_unicas
-                                st.rerun()
-                        with col2_btn:
-                            if st.button(
-                                "Limpar",
-                                key=f'clear_{col}_{st.session_state.filtro_reset_trigger}',
-                                use_container_width=True
-                            ):
-                                st.session_state[multiselect_key] = []
-                                st.session_state[f'filtro_key_{col}'] = []
-                                st.rerun()
+                        select_all = col1_btn.checkbox("Selecionar Todos", key=f'select_all_{col}_{st.session_state.filtro_reset_trigger}')
+                        clear_all = col2_btn.checkbox("Limpar", key=f'clear_{col}_{st.session_state.filtro_reset_trigger}')
 
-                        selecao = st.multiselect(
-                            "Selecione:",
-                            options=opcoes_unicas,
-                            default=st.session_state.get(multiselect_key, selecao_padrao_form),
-                            key=multiselect_key,
-                            label_visibility="collapsed"
-                        )
+                        if select_all:
+                            selecao = opcoes_unicas
+                        elif clear_all:
+                            selecao = []
+                        else:
+                            selecao = st.multiselect(
+                                "Selecione:",
+                                options=opcoes_unicas,
+                                default=st.session_state.get(multiselect_key, selecao_padrao_form),
+                                key=multiselect_key,
+                                label_visibility="collapsed"
+                            )
                         current_selections[col] = selecao
         # --- FIM DO BLOCO DOS FILTROS ---
 
