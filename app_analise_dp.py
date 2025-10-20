@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import numpy as np
 from datetime import datetime
 from io import BytesIO
@@ -10,14 +9,13 @@ st.set_page_config(layout="wide", page_title="Sistema de Análise de Indicadores
 
 # Inicializa armazenamento de bases
 if 'bases_carregadas' not in st.session_state:
-    st.session_state['bases_carregadas'] = dict()     # key: nome do arquivo + timestamp, value: dict com df e metadados
+    st.session_state['bases_carregadas'] = dict()
 if 'base_selecionada' not in st.session_state:
     st.session_state['base_selecionada'] = None
 
-# --- Sidebar: Upload e gestão das bases ---
+# --- Sidebar: Upload, seleção e configuração de colunas ---
 with st.sidebar:
     st.header("Bases de Dados Carregadas")
-    # Mostra lista de bases com opção de seleção e exclusão
     bases = st.session_state['bases_carregadas']
     keys_list = list(bases.keys())
     if keys_list:
@@ -77,40 +75,73 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Erro no processamento do arquivo: {e}")
 
-# --- Dashboard principal ---
+    if st.session_state['base_selecionada']:
+        base_info = st.session_state['bases_carregadas'][st.session_state['base_selecionada']]
+        df_analise_base = base_info['df']
+        colunas_disponiveis = df_analise_base.columns.tolist()
+        colunas_numericas, colunas_data = encontrar_colunas_tipos(df_analise_base)
+        moeda_default = [col for col in colunas_disponiveis if any(word in col.lower() for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
+        texto_default = [col for col in colunas_disponiveis if df_analise_base[col].dtype == 'object']
+        st.markdown("### Configuração de Colunas")
+        col_moeda = st.multiselect("Colunas de Moeda (R$)", options=colunas_disponiveis, default=moeda_default, key="col_moeda")
+        col_texto = st.multiselect("Colunas de Texto/ID", options=colunas_disponiveis, default=texto_default, key="col_texto")
+        col_filtros = st.multiselect("Colunas para Filtros", options=colunas_disponiveis, default=texto_default, key="col_filtros")
+
+# --- Painel principal ---
 if not st.session_state['base_selecionada']:
     st.info("Selecione ou carregue uma base de dados na barra lateral para iniciar a análise.")
 else:
-    # Recupera DataFrame e metadados da base selecionada
     base_info = st.session_state['bases_carregadas'][st.session_state['base_selecionada']]
     df_analise_base = base_info['df']
     nome_base = base_info['nome']
     st.header(f"📊 Dashboard - {nome_base} ({base_info['tipo'].upper()})")
 
-    # Exemplo de processamento - você pode adaptar para seus filtros e gráficos
     colunas_disponiveis = df_analise_base.columns.tolist()
     colunas_numericas, colunas_data = encontrar_colunas_tipos(df_analise_base)
 
+    # Recupera configurações do sidebar
+    col_moeda = st.session_state.get("col_moeda", [])
+    col_texto = st.session_state.get("col_texto", [])
+    col_filtros = st.session_state.get("col_filtros", [])
+    df_tratado = inferir_e_converter_tipos(df_analise_base, col_texto, col_moeda)
+    colunas_para_filtro = col_filtros if col_filtros else col_texto
+
     st.caption(f"Base carregada em {base_info['data_upload']}, {len(df_analise_base)} registros, {len(colunas_disponiveis)} colunas.")
 
-    # Filtros simples para análise
-    st.markdown("### Filtros Rápidos")
-    filtro_coluna = st.selectbox("Coluna para filtrar", colunas_disponiveis)
-    opcoes_filtro = sorted(df_analise_base[filtro_coluna].astype(str).unique())
-    valores_selecionados = st.multiselect("Valores para análise", opcoes_filtro)
-    if valores_selecionados:
-        df_filtrado = df_analise_base[df_analise_base[filtro_coluna].astype(str).isin(valores_selecionados)]
-    else:
-        df_filtrado = df_analise_base
+    # -- FILTROS RÁPIDOS COM 'Selecionar Todos' --
+    st.markdown("### Filtros de Análise Rápida")
+    current_selections = {}
+    for col in colunas_para_filtro:
+        opcoes_unicas = sorted(df_tratado[col].astype(str).unique())
+        with st.expander(f"{col} ({len(opcoes_unicas)} opções)"):
+            col1_btn, col2_btn = st.columns([1,1])
+            select_all = col1_btn.checkbox("Selecionar Todos", key=f"select_all_{col}")
+            clear_all = col2_btn.checkbox("Limpar", key=f"clear_all_{col}")
+            if select_all:
+                selecao = opcoes_unicas
+            elif clear_all:
+                selecao = []
+            else:
+                selecao = st.multiselect("Selecione:", options=opcoes_unicas, key=f"multi_{col}")
+            current_selections[col] = selecao
 
-    st.markdown("---")
-    st.subheader("Visualização dos Dados")
+    # Aplica filtros
+    df_filtrado = df_tratado.copy()
+    for col, selecao in current_selections.items():
+        if selecao:
+            df_filtrado = df_filtrado[df_filtrado[col].astype(str).isin(selecao)]
+
+    st.markdown("### Visualização dos Dados")
     st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
 
-    # Exemplo de gráfico
+    # Exemplo de gráfico simples
+    st.markdown("### Gráfico de Coluna Numérica")
     if colunas_numericas:
         coluna_grafico = st.selectbox("Coluna numérica para gráfico", colunas_numericas)
-        st.plotly_chart(px.histogram(df_filtrado, x=coluna_grafico, title=f"Histograma de {coluna_grafico}"), use_container_width=True)
+        st.plotly_chart(
+            px.histogram(df_filtrado, x=coluna_grafico, title=f"Histograma de {coluna_grafico}"),
+            use_container_width=True
+        )
 
     # Download da base selecionada
     csv_data = df_analise_base.to_csv(index=False, sep=';', decimal=',', encoding='utf-8')
