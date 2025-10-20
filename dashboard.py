@@ -8,7 +8,12 @@ from io import BytesIO
 import pickle 
 
 # Importa as funções do utils.py
-from utils import formatar_moeda, inferir_e_converter_tipos, encontrar_colunas_tipos, verificar_ausentes
+# Certifique-se de que o 'utils.py' está no mesmo diretório
+try:
+    from utils import formatar_moeda, inferir_e_converter_tipos, encontrar_colunas_tipos, verificar_ausentes
+except ImportError:
+    st.error("Erro: O arquivo 'utils.py' não foi encontrado. Certifique-se de que ele está no mesmo diretório.")
+    st.stop()
 
 st.set_page_config(layout="wide", page_title="Sistema de Análise de Indicadores Expert")
 
@@ -29,6 +34,7 @@ def load_catalog():
 def save_catalog(catalog):
     """Salva o catálogo de datasets no arquivo de persistência."""
     try:
+        # Cria a pasta 'data' se não existir
         os.makedirs(os.path.dirname(PERSISTENCE_PATH), exist_ok=True)
         with open(PERSISTENCE_PATH, 'wb') as f:
             pickle.dump(catalog, f)
@@ -70,7 +76,6 @@ def limpar_filtros_salvos():
     if 'df_filtrado_base' in st.session_state: del st.session_state['df_filtrado_base'] 
     if 'df_filtrado_comp' in st.session_state: del st.session_state['df_filtrado_comp'] 
         
-    # Incrementa o trigger para forçar a re-renderização dos filtros
     st.session_state['filtro_reset_trigger'] += 1
     
     # Limpa chaves de estado de widgets específicos
@@ -78,7 +83,7 @@ def limpar_filtros_salvos():
         key for key in st.session_state.keys() 
         if key.startswith('filtro_key_base_') or key.startswith('date_range_key_base_') or 
            key.startswith('filtro_key_comp_') or key.startswith('date_range_key_comp_') or
-           key.startswith('grafico_key_')
+           key.startswith('grafico_key_') or key.startswith('all_options_')
     ]
     for key in chaves_a_limpar:
         try:
@@ -88,7 +93,8 @@ def limpar_filtros_salvos():
     
 def set_multiselect_all(key, suffix):
     """Callback para o botão 'Selecionar Tudo'."""
-    all_options_key = f'all_options_{suffix}_{key}' # Ajuste de chave para garantir unicidade
+    # A chave de opções foi ajustada para ser única: all_options_[suffix]_[coluna]
+    all_options_key = f'all_options_{suffix}_{key}'
     st.session_state[f'filtro_key_{suffix}_{key}'] = st.session_state.get(all_options_key, [])
     st.rerun() 
 
@@ -106,24 +112,21 @@ def initialize_widget_state(key, options, initial_default_calc):
 
 def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name):
     """Salva o dataset processado no catálogo, define como ativo e SALVA EM DISCO."""
-    # (Lógica de nomeação do dataset...)
+    
     if st.session_state.uploaded_files_data:
         file_names = list(st.session_state.uploaded_files_data.keys())
         base_name = dataset_name if len(file_names) > 1 else os.path.splitext(file_names[0])[0]
     else:
         base_name = dataset_name
         
-    # 1. Salva o resultado no catálogo persistente
     st.session_state.data_sets_catalog[base_name] = {
         'df': df_novo,
         'colunas_filtros_salvas': colunas_filtros,
         'colunas_valor_salvas': colunas_valor,
     }
     
-    # 2. Persiste o catálogo no arquivo
     save_catalog(st.session_state.data_sets_catalog)
     
-    # 3. Define o novo catálogo como o conjunto de dados atual
     st.session_state.dados_atuais = df_novo 
     st.session_state.colunas_filtros_salvas = colunas_filtros
     st.session_state.colunas_valor_salvas = colunas_valor
@@ -145,7 +148,21 @@ def switch_dataset(dataset_name):
     else:
         st.error(f"Dataset '{dataset_name}' não encontrado.")
         
-# A função de upload e processamento no sidebar (upload/reconfig_panel) permanece inalterada...
+def show_reconfig_panel():
+    """Define o estado para exibir a seção de configuração de colunas."""
+    st.session_state.show_reconfig_section = True
+    
+# --- CORREÇÃO DO ERRO: Nova função auxiliar para DEL ---
+def remove_uploaded_file(file_name):
+    """Remove um arquivo da lista de uploads pendentes e reinicializa o estado."""
+    if file_name in st.session_state.uploaded_files_data:
+        del st.session_state.uploaded_files_data[file_name]
+        
+        # Reinicializa as variáveis de trabalho
+        st.session_state.dados_atuais = pd.DataFrame()
+        st.session_state.current_dataset_name = ""
+        st.session_state.show_reconfig_section = False
+        st.rerun() 
 
 
 # --- Aplicação de Filtros (Aprimorada para Base e Comparação) ---
@@ -154,11 +171,13 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
     
     def _aplicar_filtro_single(df, col_filtros_list, filtros_ativos_dict, data_range):
         df_filtrado_temp = df.copy()
+        # 1. Filtros Categóricos
         for col in col_filtros_list:
             selecao = filtros_ativos_dict.get(col)
             if selecao and col in df_filtrado_temp.columns: 
                 df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
         
+        # 2. Filtro de Data
         if data_range and len(data_range) == 2 and col_data and col_data[0] in df_filtrado_temp.columns:
             col_data_padrao = col_data[0]
             df_filtrado_temp = df_filtrado_temp[
@@ -167,10 +186,8 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
             ]
         return df_filtrado_temp
     
-    # 1. Aplicar filtros para a Base
+    # Aplica filtros para Base e Comparação
     df_base_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_base, data_range_base)
-    
-    # 2. Aplicar filtros para a Comparação
     df_comp_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_comp, data_range_comp)
     
     return df_base_filtrado, df_comp_filtrado
@@ -178,16 +195,12 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
 
 # --- SIDEBAR (CONFIGURAÇÕES E UPLOAD) ---
 with st.sidebar:
-    # ... (Todo o código do sidebar de upload e configuração de colunas é mantido aqui)
-    # APENAS a chamada para 'show_reconfig_panel' e 'remove_file'
-    # e o código de inicialização e persistência deve estar no topo.
-    
-    # Restante do código do sidebar
     st.markdown("# 📊")
     st.title("⚙️ Configurações do Expert")
     
-    st.info("💡 **Carga Inicial Salva:** Os datasets processados são salvos em um arquivo de persistência e carregados ao reiniciar o app. Use 'Limpar Cache de Dados' apenas para resetar tudo.")
+    st.info("💡 **Carga Inicial Salva:** Os datasets processados são salvos em um arquivo de persistência (`data/data_sets_catalog.pkl`).")
 
+    # Botão de Limpeza Completa
     if st.button("Limpar Cache de Dados"):
         st.cache_data.clear()
         if os.path.exists(PERSISTENCE_PATH):
@@ -204,7 +217,7 @@ with st.sidebar:
 
     st.header("1. Upload e Gerenciamento de Dados")
     
-    # Form para adicionar arquivos e nomear o dataset 
+    # Form para adicionar arquivos
     with st.form("file_upload_form", clear_on_submit=True):
         uploaded_files_new = st.file_uploader(
             "📥 Carregar Novo(s) CSV/XLSX", 
@@ -230,14 +243,11 @@ with st.sidebar:
             st.session_state.show_reconfig_section = True 
             st.rerun()
 
+    # Exibir e Remover Arquivos Pendentes
     if st.session_state.uploaded_files_data:
         st.markdown("---")
         st.markdown("##### Arquivos Pendentes para Processamento:")
         
-        # Função auxiliar para evitar duplicação de código
-        def show_reconfig_panel():
-            st.session_state.show_reconfig_section = True
-            
         st.button("🔁 Reconfigurar e Processar", 
                   on_click=show_reconfig_panel,
                   key='reconfig_btn_sidebar',
@@ -245,24 +255,26 @@ with st.sidebar:
                   type='primary')
         st.markdown("---")
         
-        # ... (Exibição e Remoção de arquivos pendentes)
         for file_name in st.session_state.uploaded_files_data.keys():
             col_file, col_remove = st.columns([4, 1])
             with col_file:
                 st.caption(f"- **{file_name}**")
             with col_remove:
+                # Botão de Remover com a função auxiliar (CORREÇÃO)
                 st.button("Remover", 
                           key=f"remove_file_btn_{file_name}", 
-                          on_click=lambda f=file_name: (del st.session_state.uploaded_files_data[f], st.session_state.update(dados_atuais=pd.DataFrame(), current_dataset_name="", show_reconfig_section=False), st.rerun()) if f in st.session_state.uploaded_files_data else None, 
+                          on_click=remove_uploaded_file, 
+                          args=(file_name,), 
                           use_container_width=True)
         
         st.markdown("---")
         
-        # ... (Lógica de consolidação e processamento de colunas)
+        # --- Lógica de Configuração de Colunas ---
         if st.session_state.show_reconfig_section:
+            
             df_novo = pd.DataFrame()
             all_dataframes = []
-            # ... (Lógica de concatenação dos arquivos)
+            
             for file_name, file_bytes in st.session_state.uploaded_files_data.items():
                 try:
                     uploaded_file_stream = BytesIO(file_bytes)
@@ -274,8 +286,10 @@ with st.sidebar:
                             df_temp = pd.read_csv(uploaded_file_stream, sep=',', decimal='.', encoding='utf-8')
                     elif file_name.endswith('.xlsx'):
                         df_temp = pd.read_excel(uploaded_file_stream)
+                    
                     if not df_temp.empty:
                         all_dataframes.append(df_temp)
+                        
                 except Exception:
                     pass 
 
@@ -290,8 +304,9 @@ with st.sidebar:
                 colunas_disponiveis = df_novo.columns.tolist()
                 st.info(f"Dados consolidados de {len(st.session_state.uploaded_files_data)} arquivos. Total de {len(df_novo)} linhas.")
                 
-                # --- Seleção de Colunas ---
+                # --- Seleção de Colunas (Moeda, Texto, Filtros) ---
                 moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
+                
                 if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', colunas_disponiveis, moeda_default)
                 if 'texto_select' not in st.session_state: initialize_widget_state('texto_select', colunas_disponiveis, [])
                 
@@ -384,7 +399,6 @@ else:
         colunas_valor_metricas = ['Contagem de Registros'] + colunas_numericas_salvas 
         default_metric_index = 0
         try:
-            # Tenta manter a seleção anterior ou usa o primeiro valor
             if 'metrica_principal_selectbox' in st.session_state and st.session_state.metrica_principal_selectbox in colunas_valor_metricas:
                 default_metric_index = colunas_valor_metricas.index(st.session_state.metrica_principal_selectbox)
             elif colunas_numericas_salvas:
@@ -405,7 +419,7 @@ else:
     
     st.markdown("---") 
     
-    # --- NOVO: Painel de Filtros Duplo (Base e Comparação) ---
+    # --- Painel de Filtros Duplo (Base e Comparação) ---
     st.markdown("#### 🔍 Configuração de Análise de Variação")
     
     tab_base, tab_comparacao = st.tabs(["Filtros da BASE (Referência)", "Filtros de COMPARAÇÃO (Alvo)"])
@@ -427,11 +441,9 @@ else:
                         opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
                         filtro_key = f'filtro_key_{suffix}_{col}'
                         
-                        # Garante que o estado existe, inicializando vazio
                         if filtro_key not in st.session_state:
                              st.session_state[filtro_key] = []
                              
-                        # Chave de options para 'Selecionar Tudo'
                         all_options_key = f'all_options_{suffix}_{col}'
                         st.session_state[all_options_key] = opcoes_unicas
 
@@ -479,8 +491,8 @@ else:
     filtros_ativos_base = {col: st.session_state.get(f'filtro_key_base_{col}') for col in colunas_categoricas_filtro if st.session_state.get(f'filtro_key_base_{col}')}
     filtros_ativos_comp = {col: st.session_state.get(f'filtro_key_comp_{col}') for col in colunas_categoricas_filtro if st.session_state.get(f'filtro_key_comp_{col}')}
 
-    data_range_base = st.session_state.get(f'date_range_key_base_{colunas_data[0]}', None) if colunas_data else None
-    data_range_comp = st.session_state.get(f'date_range_key_comp_{colunas_data[0]}', None) if colunas_data else None
+    data_range_base = st.session_state.get(f'date_range_key_base_{colunas_data[0]}', None) if colunas_data and colunas_data[0] in df_analise_base.columns else None
+    data_range_comp = st.session_state.get(f'date_range_key_comp_{colunas_data[0]}', None) if colunas_data and colunas_data[0] in df_analise_base.columns else None
     
     # Aplica os filtros e salva nos session_state
     df_analise_base_filtrado, df_analise_comp_filtrado = aplicar_filtros_comparacao(
@@ -522,6 +534,7 @@ else:
         variacao_abs = valor_comp - valor_base
         variacao_perc = (variacao_abs / valor_base) * 100
         delta_perc = f"{variacao_perc:.2f}%"
+        # Inverte a cor delta se a métrica não for contagem e o valor for negativo
         delta_color = 'inverse' if variacao_perc < 0 and coluna_metrica_principal != 'Contagem de Registros' else 'normal'
     else:
         variacao_abs = 0
@@ -534,8 +547,9 @@ else:
     if coluna_metrica_principal == 'Contagem de Registros':
         col_kpi_base.metric(f"Base Registros", f"{valor_base:,.0f}".replace(',', '.'))
         col_kpi_comp.metric(f"Comp. Registros", f"{valor_comp:,.0f}".replace(',', '.'))
+        # Para Contagem, o delta é 'normal' (verde se positivo, vermelho se negativo)
         col_kpi_abs.metric(f"Δ Absoluta", f"{variacao_abs:,.0f}".replace(',', '.'), delta=f"{variacao_abs:,.0f}".replace(',', '.'))
-        col_kpi_perc.metric(f"Δ Percentual", f"{valor_comp/valor_base-1:.2%}" if valor_base else "N/A", delta=delta_perc)
+        col_kpi_perc.metric(f"Δ Percentual", f"{variacao_perc:.2f}%", delta=delta_perc)
     else:
         col_kpi_base.metric(f"Total {metric_label} (Base)", formatar_moeda(valor_base))
         col_kpi_comp.metric(f"Total {metric_label} (Comparação)", formatar_moeda(valor_comp))
@@ -548,14 +562,13 @@ else:
     # --- Análise Visual (Gráficos Aprimorados) ---
     st.subheader("📈 Análise Visual (Gráficos) ")
 
-    # MANTIDO: Configuração Multi-Dimensional dos Gráficos (Eixo X e Quebra/Cor)
+    # Configuração Multi-Dimensional dos Gráficos (Eixo X e Quebra/Cor)
     col_config_x, col_config_color = st.columns(2)
     
     colunas_categoricas_para_grafico = ['Nenhuma (Total)'] + colunas_categoricas_filtro
     coluna_agrupamento_principal = colunas_categoricas_filtro[0] if colunas_categoricas_filtro else 'Nenhuma (Total)'
     
     with col_config_x:
-        # Coluna para Agrupamento (Eixo X ou Categorias Principais)
         coluna_x_fixa = st.selectbox(
             "Agrupar/Comparar por (Eixo X):", 
             options=colunas_categoricas_para_grafico, 
@@ -564,7 +577,6 @@ else:
         )
     
     with col_config_color:
-        # Coluna para Quebra/Cor (Análise em Múltiplas Referências)
         colunas_quebra_opcoes = ['Nenhuma'] + [c for c in colunas_categoricas_filtro if c != coluna_x_fixa and c != 'Nenhuma (Total)']
         coluna_quebra_cor = st.selectbox(
             "Quebrar Análise/Cor por:", 
@@ -576,12 +588,17 @@ else:
 
     st.markdown("---") 
 
-    # --- NOVO GRÁFICO 1: Comparação de Valor BASE vs. COMPARAÇÃO ---
+    # --- GRÁFICO 1: Comparação de Valor BASE vs. COMPARAÇÃO ---
     col_graph_1, col_graph_2 = st.columns(2)
     
     with col_graph_1:
         st.markdown(f"##### Gráfico 1: Comparação BASE vs. COMPARAÇÃO por **{coluna_x_fixa}**")
-        tipo_grafico_1 = st.selectbox("Tipo de Visualização (Gráfico 1):", options=['Barra Agrupada (Comparação)', 'Dispersão (Box Plot)'], key='tipo_grafico_1')
+        
+        opcoes_grafico_1 = ['Barra Agrupada (Comparação)']
+        if coluna_metrica_principal != 'Contagem de Registros':
+             opcoes_grafico_1.append('Dispersão (Box Plot)')
+             
+        tipo_grafico_1 = st.selectbox("Tipo de Visualização (Gráfico 1):", options=opcoes_grafico_1, key='tipo_grafico_1')
 
         eixo_x_real = None if coluna_x_fixa == 'Nenhuma (Total)' else coluna_x_fixa
         color_real = None if coluna_quebra_cor == 'Nenhuma' else coluna_quebra_cor
@@ -594,46 +611,42 @@ else:
         if not df_plot_base.empty and not df_plot_comp.empty:
             
             try:
-                # 1. Agregação dos dados (Base e Comparação)
                 if eixo_x_real:
-                    agg_cols = [eixo_x_real]
-                    if color_real: agg_cols.append(color_real)
-
-                    # Funções de agregação
-                    if coluna_metrica_principal == 'Contagem de Registros':
-                        agg_func = lambda df: df.groupby(agg_cols, as_index=False).size().rename(columns={'size': y_col_agg})
-                    else:
-                        agg_func = lambda df: df.groupby(agg_cols, as_index=False)[coluna_metrica_principal].sum().rename(columns={coluna_metrica_principal: y_col_agg})
-                        
-                    df_agg_base = agg_func(df_plot_base)
-                    df_agg_comp = agg_func(df_plot_comp)
-                    
-                    # Rotula e Concatena
-                    df_agg_base['Conjunto'] = 'BASE'
-                    df_agg_comp['Conjunto'] = 'COMPARAÇÃO'
-                    df_final = pd.concat([df_agg_base, df_agg_comp], ignore_index=True)
-
-                    # 2. Geração do Gráfico de Barra Agrupada
                     if tipo_grafico_1 == 'Barra Agrupada (Comparação)':
+                        agg_cols = [eixo_x_real]
+                        if color_real: agg_cols.append(color_real)
+
+                        if coluna_metrica_principal == 'Contagem de Registros':
+                            agg_func = lambda df: df.groupby(agg_cols, as_index=False).size().rename(columns={'size': y_col_agg})
+                        else:
+                            agg_func = lambda df: df.groupby(agg_cols, as_index=False)[coluna_metrica_principal].sum().rename(columns={coluna_metrica_principal: y_col_agg})
+                            
+                        df_agg_base = agg_func(df_plot_base)
+                        df_agg_comp = agg_func(df_plot_comp)
+                        
+                        df_agg_base['Conjunto'] = 'BASE'
+                        df_agg_comp['Conjunto'] = 'COMPARAÇÃO'
+                        df_final = pd.concat([df_agg_base, df_agg_comp], ignore_index=True)
+
                         fig = px.bar(df_final, x=eixo_x_real, y=y_col_agg, color='Conjunto', 
-                                     pattern_shape=color_real, # Usa a cor da quebra como pattern
+                                     pattern_shape=color_real,
                                      barmode='group',
                                      title=f'Comparação de {y_col_agg} por {eixo_x_real}')
-                        fig.update_layout(xaxis={'categoryorder': 'total descending'})
+                        fig.update_layout(xaxis={'categoryorder': 'total descending'}, title_x=0.5)
                         st.plotly_chart(fig, use_container_width=True)
                         
                     elif tipo_grafico_1 == 'Dispersão (Box Plot)' and coluna_metrica_principal != 'Contagem de Registros':
-                        # Concatena os DataFrames de base e comparação para o box plot (sem agregação)
                         df_plot_base['Conjunto'] = 'BASE'
                         df_plot_comp['Conjunto'] = 'COMPARAÇÃO'
                         df_dispersao = pd.concat([df_plot_base, df_plot_comp], ignore_index=True)
                         
                         fig = px.box(df_dispersao, x='Conjunto', y=coluna_metrica_principal, color=color_real,
                                      title=f'Distribuição de {coluna_metrica_principal} entre Base e Comparação')
+                        fig.update_layout(title_x=0.5)
                         st.plotly_chart(fig, use_container_width=True)
                     
                     else:
-                        st.info("Gráfico não gerado. Verifique a seleção de Eixo X e Métrica Principal.")
+                        st.info("Gráfico não gerado. Verifique a seleção de Eixo X e Tipo de Gráfico.")
                         
                 else:
                     st.info("Selecione uma coluna para o Eixo X para gerar o Gráfico de Comparação.")
@@ -643,7 +656,7 @@ else:
         else:
             st.warning("Um ou ambos os conjuntos de dados (Base/Comparação) estão vazios após a aplicação dos filtros.")
             
-    # --- Gráfico 2: (MANTIDO) Série Temporal/Distribuição/Dispersão ---
+    # --- Gráfico 2: (Base) Série Temporal/Distribuição/Dispersão ---
     with col_graph_2:
         st.markdown(f"##### Gráfico 2: Foco em **{coluna_metrica_principal}** (Conjunto Base)")
         opcoes_grafico_2 = ['Distribuição (Histograma)']
@@ -663,14 +676,13 @@ else:
                     eixo_x_data = colunas_data[0]
                     color_real = None if coluna_quebra_cor == 'Nenhuma' else coluna_quebra_cor
                     
+                    agg_cols = [eixo_x_data]
+                    if color_real: agg_cols.append(color_real)
+                    
                     if coluna_metrica_principal == 'Contagem de Registros':
-                         agg_cols = [eixo_x_data]
-                         if color_real: agg_cols.append(color_real)
                          df_agg = df_base.groupby(agg_cols, as_index=False).size().rename(columns={'size': 'Contagem'})
                          y_col_agg = 'Contagem'
                     else:
-                         agg_cols = [eixo_x_data]
-                         if color_real: agg_cols.append(color_real)
                          df_agg = df_base.groupby(agg_cols, as_index=False)[coluna_metrica_principal].sum()
                          y_col_agg = coluna_metrica_principal
                          
@@ -699,7 +711,7 @@ else:
                     fig.update_layout(hovermode="x unified", title_x=0.5, margin=dict(t=50, b=50, l=50, r=50))
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.info("Gráfico não gerado. Verifique as configurações de Eixo X e Tipo de Gráfico.")
+                    st.info("Gráfico não gerado. Verifique as configurações.")
                     
             except Exception as e:
                 st.error(f"Erro ao gerar o Gráfico 2: {e}")
@@ -710,12 +722,12 @@ else:
     st.markdown("---")
     st.subheader("🔍 Detalhes dos Dados Filtrados (Base)")
     
-    # ... (Lógica de exibição e download para o DataFrame Base)
     df_exibicao = df_base.copy()
     for col in colunas_numericas_salvas: 
         if col in df_exibicao.columns:
             if any(word in col for word in ['valor', 'salario', 'custo', 'receita']):
                 df_exibicao[col] = df_exibicao[col].apply(formatar_moeda)
+                
     max_linhas_exibidas = 1000
     if len(df_exibicao) > max_linhas_exibidas:
         df_exibicao_limitado = df_exibicao.head(max_linhas_exibidas)
@@ -727,13 +739,18 @@ else:
 
     csv_data = df_base.to_csv(index=False, sep=';', decimal=',', encoding='utf-8')
     xlsx_output = BytesIO()
+    xlsx_data = None
     try:
+        # Tenta importar openpyxl
         import openpyxl 
         with pd.ExcelWriter(xlsx_output, engine='openpyxl') as writer:
             df_base.to_excel(writer, index=False)
         xlsx_data = xlsx_output.getvalue()
     except ImportError:
-        xlsx_data = None
+        st.warning("A biblioteca 'openpyxl' não está instalada. O download em XLSX está desabilitado.")
+    except Exception as e:
+         st.error(f"Erro ao criar o arquivo XLSX: {e}")
+
         
     col_csv, col_xlsx, _ = st.columns([1, 1, 2])
     with col_csv:
