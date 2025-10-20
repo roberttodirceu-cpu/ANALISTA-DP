@@ -61,7 +61,7 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor):
     """Salva o DataFrame processado e as colunas de filtro/valor na sessão."""
     st.session_state.dados_atuais = df_novo 
     st.session_state.colunas_filtros_salvas = colunas_filtros
-    st.session_state.colunas_valor_salvas = colunas_valor # AQUI SALVAMOS AS COLUNAS NUMÉRICAS FINAIS
+    st.session_state.colunas_valor_salvas = colunas_valor
     return True, df_novo
 
 
@@ -70,36 +70,31 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor):
 def inferir_e_converter_tipos(df, colunas_texto=None, colunas_moeda=None):
     df_copy = df.copy() 
     
-    # Processa Colunas de Moeda (Força para float64)
     if colunas_moeda:
         for col in colunas_moeda:
             if col in df_copy.columns:
                 try:
-                    # Limpeza e conversão robusta
                     s = df_copy[col].astype(str).str.replace(r'[R$]', '', regex=True).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
                     df_copy[col] = pd.to_numeric(s, errors='coerce').astype('float64')
                 except Exception:
                     pass 
     
-    # Processa Colunas de Texto (Força para string)
     if colunas_texto:
         for col in colunas_texto:
             if col in df_copy.columns:
                 df_copy[col] = df_copy[col].fillna('').astype(str)
                 
-    # Inferência de Data/Hora e String para o restante
     for col in df_copy.columns:
-        if col not in colunas_moeda and col not in colunas_texto:
-            if df_copy[col].dtype == 'object':
-                try:
-                    df_temp = pd.to_datetime(df_copy[col], errors='coerce', dayfirst=True)
-                    if df_temp.notna().sum() > len(df_copy) * 0.5:
-                        df_copy[col] = df_temp
-                    else:
-                        df_copy[col] = df_copy[col].astype(str).fillna('')
-                except Exception:
+        if df_copy[col].dtype == 'object':
+            try:
+                df_temp = pd.to_datetime(df_copy[col], errors='coerce', dayfirst=True)
+                if df_temp.notna().sum() > len(df_copy) * 0.5:
+                    df_copy[col] = df_temp
+                else:
                     df_copy[col] = df_copy[col].astype(str).fillna('')
-                    pass 
+            except Exception:
+                df_copy[col] = df_copy[col].astype(str).fillna('')
+                pass 
     return df_copy
 
 def encontrar_colunas_tipos(df):
@@ -139,8 +134,7 @@ with st.sidebar:
         st.cache_data.clear()
         # Limpa o estado da sessão completamente
         for key in list(st.session_state.keys()):
-            if not key.startswith('_'): # Mantém chaves internas do Streamlit
-                del st.session_state[key]
+            del st.session_state[key]
         st.info("Cache de dados e estado da sessão limpos! Recarregando...")
         st.rerun()
 
@@ -180,12 +174,12 @@ with st.sidebar:
             # Heurística inicial
             moeda_default = [col for col in colunas_disponiveis if any(word in col.lower() for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
             
-            # --- 1. Inicializa Estado para Moeda, Texto e Filtros (apenas no novo upload) ---
+            # --- 1. Inicializa Estado para Moeda, Texto e Filtros ---
+            # Este bloco de código garante que o estado seja limpo e inicializado apenas no PRIMEIRO upload
             if uploaded_file is not None and ('_last_uploaded_name' not in st.session_state or st.session_state._last_uploaded_name != uploaded_file.name):
                 
-                # Limpeza seletiva do estado para novo arquivo
-                keys_to_reset = ['moeda_select', 'texto_select', 'filtros_select']
-                for key in keys_to_reset:
+                keys_to_delete = [key for key in list(st.session_state.keys()) if key.endswith('_options') or key in ['moeda_select', 'texto_select', 'filtros_select']]
+                for key in keys_to_delete:
                      if key in st.session_state:
                          del st.session_state[key]
                 
@@ -209,7 +203,6 @@ with st.sidebar:
             with col_moeda_clr_btn:
                 st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('moeda_select'), key='moeda_select_clear_btn', use_container_width=True)
             
-            # Captura a seleção de colunas moeda
             colunas_moeda = st.multiselect(
                 "Selecione:", 
                 options=colunas_disponiveis, 
@@ -230,7 +223,6 @@ with st.sidebar:
             with col_texto_clr_btn:
                 st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('texto_select'), key='texto_select_clear_btn', use_container_width=True)
             
-            # Captura a seleção de colunas texto
             colunas_texto = st.multiselect(
                 "Selecione:", 
                 options=colunas_disponiveis, 
@@ -241,7 +233,6 @@ with st.sidebar:
             st.markdown("---")
                                            
             # Realiza o processamento e a conversão de tipos (usando cache)
-            # PASSAMOS AS SELEÇÕES ATUAIS (colunas_moeda e colunas_texto)
             df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
             
             # SELEÇÃO MANUAL DAS COLUNAS DE FILTRO (Categóricas)
@@ -273,7 +264,7 @@ with st.sidebar:
                 label_visibility="collapsed"
             )
             
-            # Encontra as colunas NUMÉRICAS REAIS APÓS A CONVERSÃO
+            # Encontra as colunas NUMÉRICAS REAIS após a conversão
             colunas_valor_dashboard = df_processado.select_dtypes(include=np.number).columns.tolist()
             
             st.markdown("---")
@@ -288,7 +279,7 @@ with st.sidebar:
                     sucesso, df_processado_salvo = processar_dados_atuais( 
                         df_processado, 
                         colunas_para_filtro, 
-                        colunas_valor_dashboard # AGORA ESSA LISTA CONTÉM AS COLUNAS MOEDA CORRETAMENTE CONVERTIDAS
+                        colunas_valor_dashboard 
                     )
                     
                     if sucesso:
@@ -322,32 +313,25 @@ else:
     coluna_agrupamento_principal = colunas_categoricas_filtro[0] if colunas_categoricas_filtro else None
 
     # ----------------------------------------------------
-    # CONTROLES GERAIS (MÉTRICA E RESET) - OTIMIZAÇÃO VISUAL
+    # CONTROLES GERAIS (MÉTRICA E RESET)
     # ----------------------------------------------------
     
-    # Reduzindo o tamanho do seletor de métrica
-    col_metrica_select, _, col_reset_btn = st.columns([2, 2, 1])
+    col_metrica_select, col_reset_btn = st.columns([4, 1])
     
     with col_metrica_select:
         colunas_valor_metricas = ['Contagem de Registros'] + colunas_numericas_salvas 
         default_metric_index = 0
-        
-        # Tenta encontrar a coluna principal anterior, se não, usa a primeira numérica
-        if 'metrica_principal_selectbox' in st.session_state and st.session_state.metrica_principal_selectbox in colunas_valor_metricas:
-            default_metric_index = colunas_valor_metricas.index(st.session_state.metrica_principal_selectbox)
-        elif coluna_valor_principal and coluna_valor_principal in colunas_valor_metricas:
+        if coluna_valor_principal and coluna_valor_principal in colunas_numericas_salvas:
             try:
                 default_metric_index = colunas_valor_metricas.index(coluna_valor_principal)
             except ValueError:
                 pass
                 
-        # st.selectbox é colocado em uma coluna menor para parecer visualmente atraente
         coluna_metrica_principal = st.selectbox(
             "Métrica de Valor Principal para KPI e Gráficos:",
             options=colunas_valor_metricas,
             index=default_metric_index,
-            key='metrica_principal_selectbox',
-            help="Selecione a coluna numérica principal para o cálculo de KPIs e para o Eixo Y dos gráficos.",
+            key='metrica_principal_selectbox'
         )
         
     with col_reset_btn:
@@ -359,7 +343,7 @@ else:
     st.markdown("---") 
         
     # ----------------------------------------------------
-    # FILTROS DE ANÁLISE (Otimizado com 3 Expanders por linha)
+    # FILTROS DE ANÁLISE (Otimizado com Expanders)
     # ----------------------------------------------------
     
     st.markdown("#### 🔍 Filtros de Análise Rápida")
@@ -372,52 +356,67 @@ else:
         
         colunas_filtro_a_exibir = colunas_categoricas_filtro 
         
-        # Otimização: Usaremos 3 colunas para organizar os expanders
-        cols_container = st.columns(3) 
+        # Otimização: Usaremos 2 colunas para organizar os expanders
+        cols_container = st.columns(2) 
         
-        # Lógica para distribuir os filtros em 3 colunas
-        filtros_col_1 = colunas_filtro_a_exibir[::3]
-        filtros_col_2 = colunas_filtro_a_exibir[1::3]
-        filtros_col_3 = colunas_filtro_a_exibir[2::3]
+        # Lista para armazenar os filtros de cada coluna do layout
+        filtros_col_1 = colunas_filtro_a_exibir[::2]
+        filtros_col_2 = colunas_filtro_a_exibir[1::2]
         
         # Renderiza a primeira coluna de filtros
         with cols_container[0]:
             for col in filtros_col_1:
                 if col not in df_analise_base.columns: continue
+
+                # *** CHAVE DE OTIMIZAÇÃO: Usar st.expander ***
+                # Exibindo o número de opções para o usuário saber se precisa abrir
                 opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
                 with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
-                    if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
+                    
+                    # Inicializa o estado como lista vazia se não existir (CORREÇÃO VISUAL)
+                    if f'filtro_key_{col}' not in st.session_state:
+                         st.session_state[f'filtro_key_{col}'] = []
+                         
                     selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
+                    
                     multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
                     
-                    selecao = st.multiselect("Selecione:", options=opcoes_unicas, default=selecao_padrao_form, key=multiselect_key, label_visibility="collapsed")
+                    selecao = st.multiselect(
+                        "Selecione:", 
+                        options=opcoes_unicas, 
+                        default=selecao_padrao_form,
+                        key=multiselect_key,
+                        label_visibility="collapsed"
+                    )
                     current_selections[col] = selecao 
-
+                    # --- Fim do Expander ---
+        
         # Renderiza a segunda coluna de filtros
         with cols_container[1]:
              for col in filtros_col_2:
                 if col not in df_analise_base.columns: continue
+
+                # *** CHAVE DE OTIMIZAÇÃO: Usar st.expander ***
                 opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
                 with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
-                    if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
+                    
+                    # Inicializa o estado como lista vazia se não existir (CORREÇÃO VISUAL)
+                    if f'filtro_key_{col}' not in st.session_state:
+                         st.session_state[f'filtro_key_{col}'] = []
+                         
                     selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
+                    
                     multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
                     
-                    selecao = st.multiselect("Selecione:", options=opcoes_unicas, default=selecao_padrao_form, key=multiselect_key, label_visibility="collapsed")
+                    selecao = st.multiselect(
+                        "Selecione:", 
+                        options=opcoes_unicas, 
+                        default=selecao_padrao_form,
+                        key=multiselect_key,
+                        label_visibility="collapsed"
+                    )
                     current_selections[col] = selecao 
-                    
-        # Renderiza a terceira coluna de filtros
-        with cols_container[2]:
-             for col in filtros_col_3:
-                if col not in df_analise_base.columns: continue
-                opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
-                with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
-                    if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
-                    selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
-                    multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
-                    
-                    selecao = st.multiselect("Selecione:", options=opcoes_unicas, default=selecao_padrao_form, key=multiselect_key, label_visibility="collapsed")
-                    current_selections[col] = selecao 
+                    # --- Fim do Expander ---
 
         
         # Filtro de Data (Se houver) 
@@ -583,6 +582,7 @@ else:
             
             fig = None
             try:
+                # Otimização: A agregação é geralmente rápida, mantendo o cache desnecessário.
                 if tipo_grafico_1 in ['Comparação (Barra)', 'Composição (Pizza)']:
                     if coluna_y_fixa == 'Contagem de Registros':
                         df_agg = df_analise.groupby(eixo_x_real, as_index=False).size().rename(columns={'size': 'Contagem'})
@@ -691,7 +691,7 @@ else:
             if any(word in col.lower() for word in ['valor', 'salario', 'custo', 'receita']):
                 df_exibicao[col] = df_exibicao[col].apply(formatar_moeda)
     
-    # CHAVE DE OTIMIZAÇÃO: LIMITAR O NÚMERO DE LINHAS EXIBIDAS
+    # *** CHAVE DE OTIMIZAÇÃO: LIMITAR O NÚMERO DE LINHAS EXIBIDAS ***
     max_linhas_exibidas = 1000
     if len(df_exibicao) > max_linhas_exibidas:
         df_exibicao_limitado = df_exibicao.head(max_linhas_exibidas)
