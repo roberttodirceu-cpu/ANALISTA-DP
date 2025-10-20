@@ -5,27 +5,59 @@ import os
 import numpy as np
 from datetime import datetime
 from io import BytesIO
+import pickle # Importação necessária para serialização
 
 # Importa as funções do utils.py
 from utils import formatar_moeda, inferir_e_converter_tipos, encontrar_colunas_tipos, verificar_ausentes
 
-# --- Configuração da Página e Persistência de Dados ---
 st.set_page_config(layout="wide", page_title="Sistema de Análise de Indicadores Expert")
 
-# Aviso sobre persistência (Streamlit Cloud/Share reinicia o app e limpa o estado)
-st.sidebar.warning("⚠️ **Persistência de Dados:** Em ambientes como Streamlit Cloud, o estado da sessão pode ser limpo após 10 minutos de inatividade ou reinicialização. Use o botão 'Limpar Cache de Dados' apenas se necessário.")
+# --- Configuração de Persistência em Disco ---
+# Defina o caminho do arquivo onde o catálogo será salvo
+PERSISTENCE_PATH = 'data/data_sets_catalog.pkl'
+
+def load_catalog():
+    """Tenta carregar o catálogo de datasets do arquivo de persistência."""
+    if os.path.exists(PERSISTENCE_PATH):
+        try:
+            with open(PERSISTENCE_PATH, 'rb') as f:
+                return pickle.load(f)
+        except Exception as e:
+            st.sidebar.error(f"Erro ao carregar dados salvos: {e}. Inicializando vazio.")
+            return {}
+    return {}
+
+def save_catalog(catalog):
+    """Salva o catálogo de datasets no arquivo de persistência."""
+    try:
+        os.makedirs(os.path.dirname(PERSISTENCE_PATH), exist_ok=True)
+        with open(PERSISTENCE_PATH, 'wb') as f:
+            pickle.dump(catalog, f)
+        # st.sidebar.success("Catálogo de dados salvo com sucesso.")
+    except Exception as e:
+        st.sidebar.error(f"Erro ao salvar dados: {e}")
 
 # --- Inicialização de Estado da Sessão ---
 
-# 2. PERSISTÊNCIA: A chave 'data_sets_catalog' e 'uploaded_files_data' agora são as chaves de dados persistentes.
+# 2. PERSISTÊNCIA: Carrega o catálogo do arquivo na inicialização
 if 'data_sets_catalog' not in st.session_state:
-    st.session_state.data_sets_catalog = {} # Armazena {nome_do_dataset: {'df': df, 'filtros': [], 'valores': []}}
+    st.session_state.data_sets_catalog = load_catalog()
+    
 if 'uploaded_files_data' not in st.session_state:
-    st.session_state.uploaded_files_data = {} # Armazena {file_name: bytes_do_arquivo}
+    st.session_state.uploaded_files_data = {} 
 
 # As demais chaves de estado (variáveis de trabalho da sessão atual)
 if 'dados_atuais' not in st.session_state:
-    st.session_state.dados_atuais = pd.DataFrame() 
+    # Se houver datasets salvos, define o último como o ativo na inicialização
+    if st.session_state.data_sets_catalog:
+        last_name = list(st.session_state.data_sets_catalog.keys())[-1]
+        st.session_state.dados_atuais = st.session_state.data_sets_catalog[last_name]['df']
+        st.session_state.colunas_filtros_salvas = st.session_state.data_sets_catalog[last_name]['colunas_filtros_salvas']
+        st.session_state.colunas_valor_salvas = st.session_state.data_sets_catalog[last_name]['colunas_valor_salvas']
+        st.session_state.current_dataset_name = last_name
+    else:
+        st.session_state.dados_atuais = pd.DataFrame() 
+
 if 'df_filtrado' not in st.session_state:
     st.session_state.df_filtrado = pd.DataFrame() 
 if 'colunas_filtros_salvas' not in st.session_state:
@@ -40,6 +72,7 @@ if 'show_reconfig_section' not in st.session_state:
     st.session_state.show_reconfig_section = False
 
 # --- Funções de Lógica ---
+# (As funções auxiliares como limpar_filtros_salvos, set_multiselect_all/none, initialize_widget_state, remove_file e switch_dataset permanecem as mesmas, exceto pelo ajuste em processar_dados_atuais)
 
 def limpar_filtros_salvos():
     """Limpa o estado dos widgets de filtro e do DataFrame filtrado."""
@@ -77,7 +110,7 @@ def initialize_widget_state(key, options, initial_default_calc):
         st.session_state[key] = initial_default_calc
 
 def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name):
-    """Salva o dataset processado no catálogo e define como ativo."""
+    """Salva o dataset processado no catálogo, define como ativo e SALVA EM DISCO."""
     
     if st.session_state.uploaded_files_data:
         file_names = list(st.session_state.uploaded_files_data.keys())
@@ -88,17 +121,22 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name
     else:
         base_name = dataset_name
         
-    # Salva o resultado no catálogo persistente
+    # 1. Salva o resultado no catálogo persistente
     st.session_state.data_sets_catalog[base_name] = {
         'df': df_novo,
         'colunas_filtros_salvas': colunas_filtros,
         'colunas_valor_salvas': colunas_valor,
     }
-    # Define o novo catálogo como o conjunto de dados atual
+    
+    # 2. Persiste o catálogo no arquivo
+    save_catalog(st.session_state.data_sets_catalog)
+    
+    # 3. Define o novo catálogo como o conjunto de dados atual
     st.session_state.dados_atuais = df_novo 
     st.session_state.colunas_filtros_salvas = colunas_filtros
     st.session_state.colunas_valor_salvas = colunas_valor
     st.session_state.current_dataset_name = base_name 
+    
     return True, df_novo
 
 def remove_file(file_name):
@@ -134,10 +172,22 @@ with st.sidebar:
     st.markdown("# 📊")
     st.title("⚙️ Configurações do Expert")
     
-    # Adicionando botão de limpeza para o catálogo de dados (para corrigir erros)
+    # Novo aviso sobre a persistência
+    st.info("💡 **Carga Inicial Salva:** Os datasets processados são salvos em um arquivo de persistência e carregados ao reiniciar o app. Use 'Limpar Cache de Dados' apenas para resetar tudo.")
+
+    # Adicionando botão de limpeza total, incluindo o arquivo de persistência
     if st.button("Limpar Cache de Dados"):
         st.cache_data.clear()
-        # Limpa todas as chaves, incluindo os catálogos
+        
+        # Tenta remover o arquivo de persistência
+        if os.path.exists(PERSISTENCE_PATH):
+            try:
+                os.remove(PERSISTENCE_PATH)
+                st.sidebar.success("Arquivo de persistência limpo.")
+            except Exception as e:
+                st.sidebar.error(f"Erro ao remover arquivo de persistência: {e}")
+        
+        # Limpa todas as chaves
         keys_to_clear = [k for k in st.session_state.keys() if not k.startswith('_')]
         for key in keys_to_clear:
             del st.session_state[key]
@@ -154,7 +204,12 @@ with st.sidebar:
             accept_multiple_files=True,
             key="file_uploader_widget"
         )
-        default_dataset_name = f"Dataset Consolidado ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        # Se for uma carga complementar, sugere um nome mais informativo
+        if st.session_state.data_sets_catalog:
+            default_dataset_name = f"Dataset Complementar ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        else:
+            default_dataset_name = f"Dataset Inicial ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+            
         dataset_name_input = st.text_input("Nome para o Dataset Processado:", value=default_dataset_name)
         
         submit_upload = st.form_submit_button("Adicionar Arquivo(s) à Lista")
@@ -457,7 +512,7 @@ else:
     st.markdown("---")
     st.subheader("📈 Análise Visual (Gráficos) ")
 
-    # --- NOVO: Configuração Multi-Dimensional dos Gráficos ---
+    # --- Configuração Multi-Dimensional dos Gráficos ---
     col_config_x, col_config_color = st.columns(2)
     
     colunas_categoricas_para_grafico = ['Nenhuma (Total)'] + colunas_categoricas_filtro
