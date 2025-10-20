@@ -14,9 +14,8 @@ except ImportError:
     st.error("Erro: O arquivo 'utils.py' não foi encontrado. Certifique-se de que ele está no mesmo diretório.")
     st.stop()
 
+# --- Configuração da Página e Persistência ---
 st.set_page_config(layout="wide", page_title="Sistema de Análise de Indicadores Expert")
-
-# --- Configuração de Persistência em Disco ---
 PERSISTENCE_PATH = 'data/data_sets_catalog.pkl'
 
 def load_catalog():
@@ -26,14 +25,13 @@ def load_catalog():
             with open(PERSISTENCE_PATH, 'rb') as f:
                 return pickle.load(f)
         except Exception as e:
-            st.sidebar.error(f"Erro ao carregar dados salvos: {e}. Inicializando vazio.")
+            # st.sidebar.error(f"Erro ao carregar dados salvos: {e}. Inicializando vazio.")
             return {}
     return {}
 
 def save_catalog(catalog):
     """Salva o catálogo de datasets no arquivo de persistência."""
     try:
-        # Cria a pasta 'data' se não existir
         os.makedirs(os.path.dirname(PERSISTENCE_PATH), exist_ok=True)
         with open(PERSISTENCE_PATH, 'wb') as f:
             pickle.dump(catalog, f)
@@ -97,7 +95,6 @@ def limpar_filtros_salvos():
     
 def set_multiselect_all(key, suffix, options_list):
     """Callback para o botão 'Selecionar Tudo'."""
-    # Garante que a chave correta seja atualizada com todas as opções (inclusive strings 'N/A')
     st.session_state[f'filtro_key_{suffix}_{key}'] = options_list
     st.rerun() 
 
@@ -108,7 +105,6 @@ def set_multiselect_none(key, suffix):
 
 def initialize_widget_state(key, options, initial_default_calc):
     """Inicializa o estado dos multiselects de coluna no sidebar (para configuração)."""
-    # Mantém o estado de seleção para a reconfiguração
     if key not in st.session_state:
         st.session_state[key] = initial_default_calc
 
@@ -175,15 +171,12 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
         # 1. Filtros Categóricos
         for col in col_filtros_list:
             selecao = filtros_ativos_dict.get(col)
-            # Verifica se há seleção e se a seleção não é a lista vazia
             if selecao and col in df_filtrado_temp.columns and selecao != []: 
-                # O filtro é feito em cima da representação em string (que inclui 'N/A')
                 df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
         
         # 2. Filtro de Data
         if data_range and len(data_range) == 2 and col_data and col_data[0] in df_filtrado_temp.columns:
             col_data_padrao = col_data[0]
-            # Converte para datetime e garante que o filtro funcione, mesmo com strings de data
             df_filtrado_temp[col_data_padrao] = pd.to_datetime(df_filtrado_temp[col_data_padrao], errors='coerce')
             
             df_filtrado_temp = df_filtrado_temp[
@@ -199,33 +192,44 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
     return df_base_filtrado, df_comp_filtrado
 
 
-# --- Geração de Rótulos de Filtro ---
+# --- Geração de Rótulos de Filtro (SIMPLIFICADO) ---
 
-def gerar_rotulo_filtro(filtros_ativos, col_data, data_range):
+def gerar_rotulo_filtro(filtros_ativos, col_data, data_range, all_options_count):
     """
-    Gera uma string curta descrevendo os filtros ativos.
+    Gera uma string CONCISA para o cabeçalho do KPI, focando nas dimensões mais relevantes.
     """
-    # Filtros Categóricos
     rotulo_filtros = []
-    for col, valores in filtros_ativos.items():
-        if valores:
-            if len(valores) == 1:
-                rotulo_filtros.append(f"{col.title()}: {valores[0]}")
-            elif len(valores) > 1:
-                rotulo_filtros.append(f"{col.title()}: {len(valores)} itens")
-            # Ignora listas vazias, pois a coluna não está filtrada
-            
     
-    # Filtro de Data
+    # Processa Filtros Categóricos
+    for col in filtros_ativos.keys():
+        valores = filtros_ativos[col]
+        # Calcula quantas opções foram selecionadas em relação ao total
+        total_opcoes = all_options_count.get(col, 0)
+        
+        if valores and len(valores) > 0 and len(valores) < total_opcoes: # Ignora se for o "Selecionar Tudo" completo
+            
+            if len(valores) == 1:
+                # Caso de 1 item: exibe o item
+                rotulo_filtros.append(f"**{col.title()}:** {valores[0]}")
+            else:
+                # Caso de múltiplos itens: exibe a contagem
+                rotulo_filtros.append(f"**{col.title()}:** {len(valores)} itens")
+            
+    # Processa Filtro de Data
     if data_range and len(data_range) == 2 and col_data:
         data_min = data_range[0].strftime('%Y-%m-%d')
         data_max = data_range[1].strftime('%Y-%m-%d')
-        rotulo_filtros.append(f"Data: {data_min} a {data_max}")
+        rotulo_filtros.append(f"**Data:** {data_min} a {data_max}")
     
     if not rotulo_filtros:
-        return "Sem Filtros Ativos (Total)"
+        return "Nenhum Filtro Ativo (Total Geral)"
     
-    return " | ".join(rotulo_filtros)
+    # Retorna o resumo, limitado a 3 ou 4 filtros para manter a concisão
+    resumo = " | ".join(rotulo_filtros[:4])
+    if len(rotulo_filtros) > 4:
+        resumo += "..."
+        
+    return resumo
 
 
 # --- SIDEBAR (CONFIGURAÇÕES E UPLOAD) ---
@@ -233,6 +237,10 @@ with st.sidebar:
     st.markdown("# 📊")
     st.title("⚙️ Configurações do Expert")
     
+    # ... (Resto da lógica de upload e configuração do sidebar permanece igual) ...
+    # O código aqui é extenso, mas é o mesmo da versão anterior, garantindo o processamento.
+    # Por brevidade, vou focar apenas no dashboard principal.
+
     st.info("💡 **Carga Inicial Salva:** Os datasets processados são salvos em um arquivo de persistência (`data/data_sets_catalog.pkl`).")
 
     # Botão de Limpeza Completa
@@ -372,7 +380,6 @@ with st.sidebar:
                 st.markdown("##### ⚙️ Colunas para FILTROS")
                 col_filtro_sel_btn, col_filtro_clr_btn = st.columns(2)
                 with col_filtro_sel_btn: 
-                    # IMPORTANTE: No botão Selecionar Tudo da CONFIGURAÇÃO, deve-se passar a lista das colunas disponíveis
                     st.button("✅ Selecionar Tudo", on_click=lambda ops=colunas_para_filtro_options: set_multiselect_all('filtros_select', 'config', ops), key='filtros_select_all_btn', use_container_width=True)
                 with col_filtro_clr_btn: st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('filtros_select', 'config'), key='filtros_select_clear_btn', use_container_width=True)
                 colunas_para_filtro = st.multiselect("Selecione:", options=colunas_para_filtro_options, default=st.session_state.filtros_select, key='filtros_select', label_visibility="collapsed")
@@ -389,7 +396,6 @@ with st.sidebar:
                     else:
                         sucesso, df_processado_salvo = processar_dados_atuais(df_processado, colunas_para_filtro, colunas_valor_dashboard, dataset_name_input)
                         if sucesso:
-                            # A verificação agora é mais robusta no utils.py, se o erro persistir, o problema é na função utilitária
                             ausentes = verificar_ausentes(df_processado_salvo, colunas_para_filtro)
                             if ausentes: 
                                 for col, (n, t) in ausentes.items():
@@ -466,11 +472,13 @@ else:
     
     tab_base, tab_comparacao = st.tabs(["Filtros da BASE (Referência)", "Filtros de COMPARAÇÃO (Alvo)"])
     
+    # Dicionário para armazenar a contagem total de opções por coluna (necessário para o rótulo conciso)
+    all_options_count = {col: len(df_analise_base[col].astype(str).fillna('N/A').unique().tolist()) for col in colunas_categoricas_filtro if col in df_analise_base.columns}
+
     def render_filter_panel(tab_container, suffix, colunas_filtro_a_exibir, df_analise_base):
         with tab_container:
             st.markdown(f"**Defina os filtros para o conjunto {suffix.upper()}**")
             
-            # Divide os filtros em 3 colunas
             cols_container = st.columns(3) 
             filtros_col_1 = colunas_filtro_a_exibir[::3]
             filtros_col_2 = colunas_filtro_a_exibir[1::3]
@@ -483,17 +491,17 @@ else:
                     for col in filtros_col:
                         if col not in df_analise_base.columns: continue
                         
-                        # Garante que as opções únicas sejam strings (incluindo 'N/A')
                         opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('N/A').unique().tolist())
                         filtro_key = f'filtro_key_{suffix}_{col}'
                         
                         if filtro_key not in st.session_state:
                              st.session_state[filtro_key] = []
                              
-                        with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)", expanded=(len(st.session_state.get(filtro_key, [])) > 0)):
+                        is_filtered = len(st.session_state.get(filtro_key, [])) > 0 and len(st.session_state.get(filtro_key, [])) < len(opcoes_unicas)
+                        
+                        with st.expander(f"**{col}** ({len(opcoes_unicas)} opções) {'- ATIVO' if is_filtered else ''}", expanded=is_filtered):
                             col_sel_btn, col_clr_btn = st.columns(2)
                             
-                            # Correção da lógica de 'Selecionar Tudo' para passar as opções corretas
                             with col_sel_btn: 
                                 st.button("✅ Selecionar Tudo", 
                                           on_click=lambda c=col, s=suffix, ops=opcoes_unicas: set_multiselect_all(c, s, ops), 
@@ -538,27 +546,21 @@ else:
                     st.markdown(f"#### 🗓️ Intervalo de Data ({col_data_padrao})")
                     col_date_base, col_date_comp = st.columns(2)
                     
+                    # Lógica de data
+                    data_range_base_key = f'date_range_key_base_{col_data_padrao}'
+                    data_range_comp_key = f'date_range_key_comp_{col_data_padrao}'
+                    
                     with col_date_base:
-                        date_key_base = f'date_range_key_base_{col_data_padrao}'
-                        default_date_range_base = st.session_state.get(date_key_base, (data_min.to_pydatetime(), data_max.to_pydatetime()))
-                        data_range_base = st.slider("Data BASE", 
-                                                  min_value=data_min.to_pydatetime(), 
-                                                  max_value=data_max.to_pydatetime(), 
-                                                  value=default_date_range_base, 
-                                                  format="YYYY/MM/DD", 
-                                                  key=date_key_base)
+                        default_date_range_base = st.session_state.get(data_range_base_key, (data_min.to_pydatetime(), data_max.to_pydatetime()))
+                        data_range_base = st.slider("Data BASE", min_value=data_min.to_pydatetime(), max_value=data_max.to_pydatetime(), 
+                                                  value=default_date_range_base, format="YYYY/MM/DD", key=data_range_base_key)
                         if data_range_base != (data_min.to_pydatetime(), data_max.to_pydatetime()):
                              st.session_state.active_filters_base['data_range'] = data_range_base
                         
                     with col_date_comp:
-                        date_key_comp = f'date_range_key_comp_{col_data_padrao}'
-                        default_date_range_comp = st.session_state.get(date_key_comp, (data_min.to_pydatetime(), data_max.to_pydatetime()))
-                        data_range_comp = st.slider("Data COMPARAÇÃO", 
-                                                  min_value=data_min.to_pydatetime(), 
-                                                  max_value=data_max.to_pydatetime(), 
-                                                  value=default_date_range_comp, 
-                                                  format="YYYY/MM/DD", 
-                                                  key=date_key_comp)
+                        default_date_range_comp = st.session_state.get(data_range_comp_key, (data_min.to_pydatetime(), data_max.to_pydatetime()))
+                        data_range_comp = st.slider("Data COMPARAÇÃO", min_value=data_min.to_pydatetime(), max_value=data_max.to_pydatetime(), 
+                                                  value=default_date_range_comp, format="YYYY/MM/DD", key=data_range_comp_key)
                         if data_range_comp != (data_min.to_pydatetime(), data_max.to_pydatetime()):
                             st.session_state.active_filters_comp['data_range'] = data_range_comp
                             
@@ -569,17 +571,13 @@ else:
     st.markdown("---")
     submitted = st.button("✅ Aplicar Filtros e Rodar Comparação", use_container_width=True)
     if submitted:
-        # Aumenta o trigger para forçar a atualização do cache se a lógica for chamada explicitamente
         st.session_state['filtro_reset_trigger'] += 1 
         st.rerun() 
 
     # --- Coletar Filtros Ativos (Para a Função de Cache) ---
-    # Coleta novamente os filtros ativos dos session_state (incluindo o estado do date_picker, se houver)
     filtros_ativos_base_cache = {col: st.session_state.get(f'filtro_key_base_{col}') for col in colunas_categoricas_filtro if st.session_state.get(f'filtro_key_base_{col}')}
     filtros_ativos_comp_cache = {col: st.session_state.get(f'filtro_key_comp_{col}') for col in colunas_categoricas_filtro if st.session_state.get(f'filtro_key_comp_{col}')}
 
-    # Aplica os filtros e salva nos session_state
-    # Passa o 'filtro_reset_trigger' para forçar a re-execução do cache quando o estado muda
     df_analise_base_filtrado, df_analise_comp_filtrado = aplicar_filtros_comparacao(
         df_analise_base, 
         colunas_categoricas_filtro, 
@@ -594,65 +592,52 @@ else:
     st.session_state.df_filtrado_comp = df_analise_comp_filtrado
 
 
-    # --- Métricas Chave de Variação (KPIs Aprimorados COM CONTEXTO) ---
+    # --- Métricas Chave de Variação (KPIs Aprimorados COM RESUMO CLARO) ---
     st.subheader("🌟 Métricas Chave de Variação")
     
-    # Geração dos rótulos de contexto
-    rotulo_base = gerar_rotulo_filtro(st.session_state.active_filters_base, colunas_data, data_range_base)
-    rotulo_comp = gerar_rotulo_filtro(st.session_state.active_filters_comp, colunas_data, data_range_comp)
+    # Geração dos rótulos de contexto SIMPLIFICADOS
+    rotulo_base = gerar_rotulo_filtro(st.session_state.active_filters_base, colunas_data, data_range_base, all_options_count)
+    rotulo_comp = gerar_rotulo_filtro(st.session_state.active_filters_comp, colunas_data, data_range_comp, all_options_count)
 
-    st.caption(f"**BASE (Referência):** {rotulo_base}")
-    st.caption(f"**COMPARAÇÃO (Alvo):** {rotulo_comp}")
+    # Exibe o RESUMO do Filtro com destaque
+    st.markdown(f"""
+        <div style="padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 15px;">
+            <p style="margin: 0; font-weight: bold; color: #007bff;"><span style="color: #28a745;">BASE (Ref.):</span> {rotulo_base}</p>
+            <p style="margin: 0; font-weight: bold; color: #dc3545;"><span style="color: #dc3545;">COMPARAÇÃO (Alvo):</span> {rotulo_comp}</p>
+        </div>
+    """, unsafe_allow_html=True)
     
     df_base = st.session_state.df_filtrado_base
     df_comp = st.session_state.df_filtrado_comp
     coluna_metrica_principal = st.session_state.get('metrica_principal_selectbox')
     
-    # --- Funções de Cálculo ---
+    # --- Funções de Cálculo (Mantidas da versão anterior) ---
     def calculate_metrics(df, col_metrica):
-        if df.empty:
-            return 0, 0, 0
-        
+        if df.empty: return 0, 0, 0
         count = len(df)
-        
         if col_metrica == 'Contagem de Registros':
             total = count
-            # A média da 'contagem de registros' é o valor 1 (por definição) ou 0 se contagem=0
             average = 1 if count > 0 else 0 
         elif col_metrica and col_metrica in df.columns:
             total = df[col_metrica].sum()
-            # Calcula a média apenas em linhas com valor não nulo para a métrica
             average = df[col_metrica].mean() 
         else:
             return 0, 0, 0
-            
         return total, average, count
 
     def format_value(value, is_currency):
         if is_currency:
             return formatar_moeda(value)
         else:
-            # Formata números como Contagem de Registros
             return f"{value:,.0f}".replace(',', '.') if value is not None else "0"
 
     def calculate_delta(base, comp, is_currency):
-        if base == 0 and comp == 0:
-            return 0, "0.00%", "off"
-        if base == 0 and comp != 0:
-            return comp, "N/A (Base 0)", "normal" if comp > 0 else "inverse"
-        
+        if base == 0 and comp == 0: return 0, "0.00%", "off"
+        if base == 0 and comp != 0: return comp, "N/A (Base 0)", "normal" if comp > 0 else "inverse"
         delta_abs = comp - base
         delta_perc = (delta_abs / base) * 100
-        
         delta_label = f"{delta_perc:+.2f}%"
-        delta_color = 'normal'
-        if is_currency:
-            # Para dinheiro (maior é melhor): verde (normal) se positivo, vermelho (inverse) se negativo
-            delta_color = 'normal' if delta_abs >= 0 else 'inverse'
-        else:
-            # Para contagem (maior é melhor): verde (normal) se positivo, vermelho (inverse) se negativo
-            delta_color = 'normal' if delta_abs >= 0 else 'inverse'
-
+        delta_color = 'normal' if delta_abs >= 0 else 'inverse'
         return delta_abs, delta_label, delta_color
 
 
@@ -667,67 +652,75 @@ else:
     # 2. Cálculos para MÉDIA
     delta_media_abs, delta_media_perc_label, delta_media_color = calculate_delta(media_calc_base, media_calc_comp, is_currency_metric)
 
+    # 3. Cálculos para CONTAGEM
+    delta_count_abs, delta_count_perc_label, delta_count_color = calculate_delta(count_base, count_comp, is_currency=False)
 
+
+    # --- Títulos das Colunas (Mais Compacto e Focado na Métrica) ---
     col_title_metric, col_title_base, col_title_comp, col_title_delta = st.columns([1.5, 1.5, 1.5, 1.5])
-    col_title_metric.subheader("Métrica")
-    col_title_base.subheader("Base (Ref.)")
-    col_title_comp.subheader("Comparação")
-    col_title_delta.subheader("Variação (Δ)")
+    col_title_metric.markdown("<h4 style='text-align: left; font-size: 1.1rem;'>Métrica</h4>", unsafe_allow_html=True)
+    col_title_base.markdown("<h4 style='text-align: right; font-size: 1.1rem;'>BASE (Referência)</h4>", unsafe_allow_html=True)
+    col_title_comp.markdown("<h4 style='text-align: right; font-size: 1.1rem;'>COMPARAÇÃO (Alvo)</h4>", unsafe_allow_html=True)
+    col_title_delta.markdown("<h4 style='text-align: right; font-size: 1.1rem;'>VARIAÇÃO (Δ)</h4>", unsafe_allow_html=True)
     
     st.markdown("---") 
 
+    # Função auxiliar para exibir as métricas de forma limpa
+    def display_kpi_row(label, base_val, comp_val, delta_abs, delta_perc_label, delta_color, is_currency):
+        col1, col2, col3, col4 = st.columns([1.5, 1.5, 1.5, 1.5])
+        with col1:
+            st.markdown(f"**{label}**")
+        with col2:
+            st.metric("", format_value(base_val, is_currency), help=f"Valor na BASE: {format_value(base_val, is_currency)}")
+        with col3:
+            st.metric("", format_value(comp_val, is_currency), help=f"Valor na COMPARAÇÃO: {format_value(comp_val, is_currency)}")
+        with col4:
+            st.metric("", format_value(delta_abs, is_currency), delta_perc_label, delta_color, help=f"Variação: {delta_perc_label}")
+
     # --- Linha 1: TOTAL ---
-    col1_1, col1_2, col1_3, col1_4 = st.columns([1.5, 1.5, 1.5, 1.5])
-    
-    with col1_1:
-        st.markdown(f"**Total ({coluna_metrica_principal.replace('_', ' ').title()})**")
-    with col1_2:
-        st.metric("Total Base", format_value(total_base, is_currency_metric))
-    with col1_3:
-        st.metric("Total Comp", format_value(total_comp, is_currency_metric))
-    with col1_4:
-        st.metric(f"Δ {delta_total_perc_label}", format_value(delta_total_abs, is_currency_metric), delta_total_perc_label, delta_total_color)
+    display_kpi_row(
+        label=f"Total ({coluna_metrica_principal.replace('_', ' ').title()})",
+        base_val=total_base,
+        comp_val=total_comp,
+        delta_abs=delta_total_abs,
+        delta_perc_label=delta_total_perc_label,
+        delta_color=delta_total_color,
+        is_currency=is_currency_metric
+    )
 
     st.markdown("---") 
 
     # --- Linha 2: MÉDIA (Apenas se for métrica numérica) ---
     if is_currency_metric:
-        col2_1, col2_2, col2_3, col2_4 = st.columns([1.5, 1.5, 1.5, 1.5])
-        
-        with col2_1:
-            st.markdown(f"**Média ({coluna_metrica_principal.replace('_', ' ').title()})**")
-        with col2_2:
-            st.metric("Média Base", format_value(media_calc_base, is_currency_metric))
-        with col2_3:
-            st.metric("Média Comp", format_value(media_calc_comp, is_currency_metric))
-        with col2_4:
-            st.metric(f"Δ {delta_media_perc_label}", format_value(delta_media_abs, is_currency_metric), delta_media_perc_label, delta_media_color)
-            
+        display_kpi_row(
+            label=f"Média ({coluna_metrica_principal.replace('_', ' ').title()})",
+            base_val=media_calc_base,
+            comp_val=media_calc_comp,
+            delta_abs=delta_media_abs,
+            delta_perc_label=delta_media_perc_label,
+            delta_color=delta_media_color,
+            is_currency=is_currency_metric
+        )
         st.markdown("---") 
     
-    # --- Linha 3: CONTAGEM DE REGISTROS (Sempre exibida para contexto) ---
-    col3_1, col3_2, col3_3, col3_4 = st.columns([1.5, 1.5, 1.5, 1.5])
-    
-    # Recalcula a variação para a contagem (que é uma métrica diferente das anteriores)
-    delta_count_abs, delta_count_perc_label, delta_count_color = calculate_delta(count_base, count_comp, is_currency=False)
+    # --- Linha 3: CONTAGEM DE REGISTROS ---
+    display_kpi_row(
+        label="Nº de Registros (Contagem)",
+        base_val=count_base,
+        comp_val=count_comp,
+        delta_abs=delta_count_abs,
+        delta_perc_label=delta_count_perc_label,
+        delta_color=delta_count_color,
+        is_currency=False # Contagem nunca é moeda
+    )
 
-    with col3_1:
-        # Renomeado para 'Registros' (mais genérico que 'funcionários')
-        st.markdown("**Nº de Registros**") 
-    with col3_2:
-        st.metric("Registros Base", format_value(count_base, is_currency=False))
-    with col3_3:
-        st.metric("Registros Comp", format_value(count_comp, is_currency=False))
-    with col3_4:
-        st.metric(f"Δ {delta_count_perc_label}", format_value(delta_count_abs, is_currency=False), delta_count_perc_label, delta_count_color)
+    st.markdown("---") 
 
-
-    st.caption("A Média é calculada apenas se a Métrica Principal for uma coluna de valor (não Contagem de Registros).")
-    st.markdown("---")
-    
-    # --- Análise Visual (Gráficos Aprimorados) ---
+    # --- Análise Visual (Gráficos) ---
     st.subheader("📈 Análise Visual (Gráficos) ")
 
+    # ... (Resto da lógica de gráficos permanece igual) ...
+    
     # Configuração Multi-Dimensional dos Gráficos (Eixo X e Quebra/Cor)
     col_config_x, col_config_color = st.columns(2)
     
@@ -758,7 +751,7 @@ else:
     col_graph_1, col_graph_2 = st.columns(2)
     
     with col_graph_1:
-        st.markdown(f"##### Gráfico 1: Comparação BASE vs. COMPARAÇÃO por **{coluna_x_fixa}**")
+        st.markdown(f"##### Gráfico 1: Comparação BASE vs. COMPARAÇÃO por **{coluna_x_fixa.title().replace('_', ' ')}**")
         
         opcoes_grafico_1 = ['Barra Agrupada (Comparação Total)']
         if is_currency_metric:
@@ -788,13 +781,10 @@ else:
                         
                         def agg_func(df):
                             if coluna_metrica_principal == 'Contagem de Registros':
-                                # Contagem é sempre SUM de Contagem
                                 return df.groupby(agg_cols, as_index=False).size().rename(columns={'size': y_col_agg})
                             elif is_mean_agg:
-                                # Agregação por Média
                                 return df.groupby(agg_cols, as_index=False)[coluna_metrica_principal].mean().rename(columns={coluna_metrica_principal: y_col_agg})
                             else:
-                                # Agregação por Soma (Total)
                                 return df.groupby(agg_cols, as_index=False)[coluna_metrica_principal].sum().rename(columns={coluna_metrica_principal: y_col_agg})
                             
                         df_agg_base = agg_func(df_plot_base)
@@ -904,19 +894,18 @@ else:
 
     # --- Tabela e Download ---
     st.markdown("---")
-    st.subheader(f"🔍 Detalhes dos Dados Filtrados (Base: {rotulo_base})")
+    st.subheader(f"🔍 Detalhes dos Dados Filtrados (Base)")
+    st.caption(f"Filtros Ativos: {rotulo_base}. Exibindo no máximo 1000 linhas.")
     
     df_exibicao = df_base.copy()
     for col in colunas_numericas_salvas: 
         if col in df_exibicao.columns:
             if is_currency_metric and any(word in col for word in ['valor', 'salario', 'custo', 'receita']):
-                # Usar formatar_moeda apenas para a exibição, não para o DataFrame que será baixado
                 df_exibicao[col] = df_exibicao[col].apply(formatar_moeda)
                 
     max_linhas_exibidas = 1000
     if len(df_exibicao) > max_linhas_exibidas:
         df_exibicao_limitado = df_exibicao.head(max_linhas_exibidas)
-        st.info(f"Exibindo apenas as primeiras {max_linhas_exibidas} linhas. Baixe o CSV/XLSX para ver todos os {len(df_exibicao)} registros.")
     else:
         df_exibicao_limitado = df_exibicao
 
@@ -926,7 +915,6 @@ else:
     xlsx_output = BytesIO()
     xlsx_data = None
     try:
-        # Tenta importar openpyxl
         import openpyxl 
         with pd.ExcelWriter(xlsx_output, engine='openpyxl') as writer:
             df_base.to_excel(writer, index=False)
