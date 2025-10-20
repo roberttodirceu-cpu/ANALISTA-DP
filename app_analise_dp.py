@@ -37,16 +37,25 @@ def limpar_filtros_salvos():
 # --- FUNÇÕES DE CALLBACK E ESTADO ---
 
 def set_multiselect_all(key):
-    """Callback para definir a seleção de um multiselect para TODAS as opções salvas e forçar rerun."""
+    """Callback para definir a seleção de um multiselect para TODAS as opções salvas e forçar rerun (usado na sidebar)."""
     all_options_key = f'all_{key}_options'
     st.session_state[key] = st.session_state.get(all_options_key, [])
     st.rerun() 
 
 def set_multiselect_none(key):
-    """Callback para limpar a seleção de um multiselect (NENHUMA opção) e forçar rerun."""
+    """Callback para limpar a seleção de um multiselect (NENHUMA opção) e forçar rerun (usado na sidebar)."""
     st.session_state[key] = []
     st.rerun()
-        
+
+def set_multiselect_all_filter(key_col, key_all_options):
+    """
+    NOVA FUNÇÃO: Callback para definir a seleção de um multiselect de filtro para TODAS as opções salvas.
+    Força o estado do filtro e o rerun para re-renderizar o formulário com o novo default.
+    """
+    # A chave do filtro no session_state é 'filtro_key_{col}'
+    st.session_state[f'filtro_key_{key_col}'] = st.session_state.get(key_all_options, [])
+    st.rerun()
+    
 def initialize_widget_state(key, options, initial_default_calc):
     """Inicializa as chaves de estado de sessão para multiselect."""
     all_options_key = f'all_{key}_options'
@@ -188,7 +197,7 @@ with st.sidebar:
                 for key in keys_to_reset:
                      if key in st.session_state:
                          del st.session_state[key]
-                
+                         
                 initialize_widget_state('moeda_select', colunas_disponiveis, moeda_default)
                 initialize_widget_state('texto_select', colunas_disponiveis, [])
                 st.session_state._last_uploaded_name = uploaded_file.name
@@ -239,7 +248,7 @@ with st.sidebar:
                 label_visibility="collapsed"
             )
             st.markdown("---")
-                                           
+            
             # Realiza o processamento e a conversão de tipos (usando cache)
             # PASSAMOS AS SELEÇÕES ATUAIS (colunas_moeda e colunas_texto)
             df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
@@ -385,38 +394,104 @@ else:
             for col in filtros_col_1:
                 if col not in df_analise_base.columns: continue
                 opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
+                
+                # --- NOVIDADE: Salvando todas as opções em uma chave temporária ---
+                temp_all_options_key = f'temp_all_options_{col}'
+                st.session_state[temp_all_options_key] = opcoes_unicas
+                # ------------------------------------------------------------------
+
                 with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
                     if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
                     selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
                     multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
                     
-                    selecao = st.multiselect("Selecione:", options=opcoes_unicas, default=selecao_padrao_form, key=multiselect_key, label_visibility="collapsed")
+                    # --- NOVIDADE: Botão para selecionar tudo ---
+                    st.button(
+                        f"✅ Selecionar Todas ({len(opcoes_unicas)})", 
+                        on_click=lambda c=col, a=temp_all_options_key: set_multiselect_all_filter(c, a), 
+                        key=f'select_all_btn_{col}',
+                        use_container_width=True
+                    )
+                    st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True) # Espaçamento
+                    # -------------------------------------------
+                    
+                    selecao = st.multiselect(
+                        "Selecione:", 
+                        options=opcoes_unicas, 
+                        default=selecao_padrao_form, 
+                        key=multiselect_key, 
+                        label_visibility="collapsed"
+                    )
                     current_selections[col] = selecao 
 
         # Renderiza a segunda coluna de filtros
         with cols_container[1]:
-             for col in filtros_col_2:
+              for col in filtros_col_2:
                 if col not in df_analise_base.columns: continue
                 opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
+
+                # --- NOVIDADE: Salvando todas as opções em uma chave temporária ---
+                temp_all_options_key = f'temp_all_options_{col}'
+                st.session_state[temp_all_options_key] = opcoes_unicas
+                # ------------------------------------------------------------------
+
                 with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
                     if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
                     selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
                     multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
                     
-                    selecao = st.multiselect("Selecione:", options=opcoes_unicas, default=selecao_padrao_form, key=multiselect_key, label_visibility="collapsed")
+                    # --- NOVIDADE: Botão para selecionar tudo ---
+                    st.button(
+                        f"✅ Selecionar Todas ({len(opcoes_unicas)})", 
+                        on_click=lambda c=col, a=temp_all_options_key: set_multiselect_all_filter(c, a), 
+                        key=f'select_all_btn_{col}',
+                        use_container_width=True
+                    )
+                    st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True) # Espaçamento
+                    # -------------------------------------------
+
+                    selecao = st.multiselect(
+                        "Selecione:", 
+                        options=opcoes_unicas, 
+                        default=selecao_padrao_form, 
+                        key=multiselect_key, 
+                        label_visibility="collapsed"
+                    )
                     current_selections[col] = selecao 
                     
         # Renderiza a terceira coluna de filtros
         with cols_container[2]:
-             for col in filtros_col_3:
+              for col in filtros_col_3:
                 if col not in df_analise_base.columns: continue
                 opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
+                
+                # --- NOVIDADE: Salvando todas as opções em uma chave temporária ---
+                temp_all_options_key = f'temp_all_options_{col}'
+                st.session_state[temp_all_options_key] = opcoes_unicas
+                # ------------------------------------------------------------------
+
                 with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
                     if f'filtro_key_{col}' not in st.session_state: st.session_state[f'filtro_key_{col}'] = []
                     selecao_padrao_form = st.session_state.get(f'filtro_key_{col}', [])
                     multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
                     
-                    selecao = st.multiselect("Selecione:", options=opcoes_unicas, default=selecao_padrao_form, key=multiselect_key, label_visibility="collapsed")
+                    # --- NOVIDADE: Botão para selecionar tudo ---
+                    st.button(
+                        f"✅ Selecionar Todas ({len(opcoes_unicas)})", 
+                        on_click=lambda c=col, a=temp_all_options_key: set_multiselect_all_filter(c, a), 
+                        key=f'select_all_btn_{col}',
+                        use_container_width=True
+                    )
+                    st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True) # Espaçamento
+                    # -------------------------------------------
+                    
+                    selecao = st.multiselect(
+                        "Selecione:", 
+                        options=opcoes_unicas, 
+                        default=selecao_padrao_form, 
+                        key=multiselect_key, 
+                        label_visibility="collapsed"
+                    )
                     current_selections[col] = selecao 
 
         
@@ -435,12 +510,12 @@ else:
 
                     st.markdown(f"#### 🗓️ Intervalo de Data ({col_data_padrao})")
                     data_range = st.slider("", 
-                                           min_value=data_min.to_pydatetime(), 
-                                           max_value=data_max.to_pydatetime(),
-                                           value=default_date_range,
-                                           format="YYYY/MM/DD",
-                                           key=slider_key,
-                                           label_visibility="collapsed")
+                                            min_value=data_min.to_pydatetime(), 
+                                            max_value=data_max.to_pydatetime(),
+                                            value=default_date_range,
+                                            format="YYYY/MM/DD",
+                                            key=slider_key,
+                                            label_visibility="collapsed")
                     current_selections[col_data_padrao] = data_range
                 except Exception:
                     st.warning("Erro na exibição do filtro de data.")
@@ -498,8 +573,8 @@ else:
         
         # Se nenhum filtro foi aplicado, retorna o DF base (sem cópia)
         if not filtro_aplicado:
-             return df_base
-             
+              return df_base
+              
         return df_filtrado_temp
 
     # Monta a lista de filtros ativos (seleções atuais)
@@ -631,9 +706,15 @@ else:
         if not colunas_data:
             opcoes_grafico_2 = [o for o in opcoes_grafico_2 if 'Série Temporal' not in o]
 
-        tipo_grafico_2 = st.selectbox("Tipo de Visualização (Gráfico 2):", options=opcoes_grafico_2, index=0, key='tipo_grafico_2')
+        # Garante que haja opções antes de tentar selecionar
+        if opcoes_grafico_2:
+             tipo_grafico_2 = st.selectbox("Tipo de Visualização (Gráfico 2):", options=opcoes_grafico_2, index=0, key='tipo_grafico_2')
+        else:
+             st.warning("Não há opções de gráfico disponíveis para as colunas selecionadas.")
+             tipo_grafico_2 = None
 
-        if not df_analise.empty:
+
+        if not df_analise.empty and tipo_grafico_2:
             
             fig = None
             try:
@@ -659,53 +740,51 @@ else:
                         
                 elif tipo_grafico_2 == 'Relação (Dispersão)':
                     if len(colunas_numericas_salvas) > 1 and coluna_y_fixa != 'Contagem de Registros':
-                        colunas_para_dispersao = [c for c in colunas_numericas_salvas if c != coluna_y_fixa]
-                        if colunas_para_dispersao:
-                            coluna_x_disp = st.selectbox("Selecione o Eixo X para Dispersão:", options=colunas_para_dispersao, key='col_x_disp')
-                            fig = px.scatter(df_analise, x=coluna_x_disp, y=coluna_y_fixa, title=f'Relação entre {coluna_x_disp} e {coluna_y_fixa}')
+                        # Permite o usuário escolher o eixo X (outra coluna numérica)
+                        outras_colunas_numericas = [c for c in colunas_numericas_salvas if c != coluna_y_fixa]
+                        coluna_x_disp = st.selectbox("Eixo X (Relação/Dispersão):", options=outras_colunas_numericas, key='coluna_x_dispersao')
+                        
+                        if coluna_x_disp:
+                            fig = px.scatter(df_analise, x=coluna_x_disp, y=coluna_y_fixa, color=coluna_x_fixa, 
+                                             title=f'Relação entre {coluna_x_disp} e {coluna_y_fixa}',
+                                             hover_data=[coluna_x_fixa] if coluna_x_fixa not in ['Nenhuma Chave Categórica Encontrada'] else None)
                         else:
-                             st.warning("Necessário outra coluna numérica além da Métrica Principal para Dispersão.")
+                            st.warning("Selecione outra Coluna de Valor para o Eixo X.")
                     else:
-                        st.warning("Necessário mais de uma coluna numérica para Gráfico de Dispersão.")
-
+                        st.warning("Necessário mais de uma coluna numérica para gráfico de Dispersão.")
 
                 if fig:
                     fig.update_layout(hovermode="x unified", title_x=0.5, margin=dict(t=50, b=50, l=50, r=50))
                     st.plotly_chart(fig, use_container_width=True)
-                    
+
             except Exception as e:
                 st.error(f"Erro ao gerar o Gráfico 2. Erro: {e}")
                 
+        elif not df_analise.empty and tipo_grafico_2 is None:
+             st.warning("Não há opções de gráfico disponíveis para as colunas selecionadas.")
         else:
-            st.warning("O DataFrame está vazio após a aplicação dos filtros.")
+            st.warning("Dados não carregados ou vazios.")
 
-    # --- Tabela Detalhada (Otimizada) ---
     st.markdown("---")
-    st.subheader("🔍 Detalhes dos Dados Filtrados")
     
-    df_exibicao = df_analise.copy()
-    
-    # Formatação de Moeda
-    for col in colunas_numericas_salvas: 
-        if col in df_exibicao.columns:
-            if any(word in col.lower() for word in ['valor', 'salario', 'custo', 'receita']):
-                df_exibicao[col] = df_exibicao[col].apply(formatar_moeda)
-    
-    # CHAVE DE OTIMIZAÇÃO: LIMITAR O NÚMERO DE LINHAS EXIBIDAS
-    max_linhas_exibidas = 1000
-    if len(df_exibicao) > max_linhas_exibidas:
-        df_exibicao_limitado = df_exibicao.head(max_linhas_exibidas)
-        st.info(f"Exibindo apenas as primeiras {max_linhas_exibidas} linhas para evitar travamento. Baixe o CSV para ver todos os {len(df_exibicao)} registros.")
-    else:
-        df_exibicao_limitado = df_exibicao
-        
-    st.dataframe(df_exibicao_limitado, use_container_width=True, hide_index=True)
+    # ----------------------------------------------------
+    # TABELA DE DADOS FILTRADOS 
+    # ----------------------------------------------------
 
-    # Botão de download (usa o DF COMPLETO)
-    csv_data = df_analise.to_csv(index=False, sep=';', decimal=',', encoding='utf-8')
-    st.download_button(
-        label="📥 Baixar Dados Tratados (CSV)",
-        data=csv_data,
-        file_name=f'dados_analise_exportados_{datetime.now().strftime("%Y%m%d_%H%M")}.csv',
-        mime='text/csv',
-    )
+    st.subheader("📋 Tabela de Dados (Filtrados)")
+    
+    # Adiciona a formatação de moeda na exibição da tabela
+    df_display = st.session_state.df_filtrado.copy()
+    
+    # Formata colunas numéricas (que são as antigas colunas moeda)
+    for col in colunas_numericas_salvas:
+        if col in df_display.columns:
+            # Garante que a formatação não aplique em colunas grandes demais (evita lentidão)
+            if df_display[col].dtype in ['float64', 'int64']:
+                 df_display[col] = df_display[col].apply(lambda x: formatar_moeda(x) if pd.notna(x) else '')
+
+
+    if not df_display.empty:
+        st.dataframe(df_display, use_container_width=True)
+    else:
+        st.info("Nenhum dado encontrado com os filtros aplicados.")
