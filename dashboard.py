@@ -20,6 +20,8 @@ if 'colunas_valor_salvas' not in st.session_state:
     st.session_state.colunas_valor_salvas = []
 if 'filtro_reset_trigger' not in st.session_state:
     st.session_state['filtro_reset_trigger'] = 0
+if 'uploaded_files' not in st.session_state:
+    st.session_state.uploaded_files = {} # Armazena {file_name: file_object}
 
 def limpar_filtros_salvos():
     if 'df_filtrado' in st.session_state:
@@ -72,37 +74,88 @@ with st.sidebar:
         st.rerun()
 
     st.header("1. Upload e Processamento de Dados")
-    uploaded_file = st.file_uploader("📥 Carregar Novo CSV/XLSX", type=['csv', 'xlsx'])
+    
+    # NOVO: Permite múltiplos arquivos
+    uploaded_files_new = st.file_uploader("📥 Carregar Novo(s) CSV/XLSX", type=['csv', 'xlsx'], accept_multiple_files=True)
+    
+    # Lógica para adicionar novos arquivos à lista de arquivos da sessão
+    if uploaded_files_new:
+        for file in uploaded_files_new:
+            # Garante que o arquivo só é adicionado uma vez
+            if file.name not in st.session_state.uploaded_files:
+                st.session_state.uploaded_files[file.name] = file
+
     df_novo = pd.DataFrame()
-    if uploaded_file is not None:
-        try:
-            if uploaded_file.name.endswith('.csv'):
-                uploaded_file.seek(0)
-                try:
-                    df_novo = pd.read_csv(uploaded_file, sep=';', decimal=',', encoding='utf-8')
-                except:
-                    uploaded_file.seek(0)
-                    df_novo = pd.read_csv(uploaded_file, sep=',', decimal='.', encoding='utf-8')
-            elif uploaded_file.name.endswith('.xlsx'):
-                df_novo = pd.read_excel(uploaded_file)
-            if df_novo.empty:
-                st.error("O arquivo carregado está vazio ou não pôde ser lido corretamente.")
-                st.session_state.dados_atuais = pd.DataFrame() 
-                raise ValueError("DataFrame vazio após leitura.")
+    
+    if st.session_state.uploaded_files:
+        
+        # --- NOVO: Exibir e Remover Arquivos ---
+        st.markdown("---")
+        st.markdown("##### Arquivos Carregados para Processamento:")
+        
+        files_to_remove = []
+        
+        # Itera sobre arquivos atualmente no estado da sessão
+        for file_name, file_object in st.session_state.uploaded_files.items():
+            col_file, col_remove = st.columns([4, 1])
+            with col_file:
+                st.markdown(f"- **{file_name}** ({file_object.size / (1024*1024):.2f} MB)")
+            with col_remove:
+                # Botão de remoção com chave única
+                if st.button("Remover", key=f"remove_file_{file_name}", use_container_width=True):
+                    files_to_remove.append(file_name)
+        
+        # Processa as remoções e força o rerun
+        if files_to_remove:
+            for file_name in files_to_remove:
+                del st.session_state.uploaded_files[file_name]
+            st.info(f"Arquivo(s) removido(s): {', '.join(files_to_remove)}. Recarregando...")
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # --- NOVO: Leitura e Concatenação dos Arquivos ---
+        all_dataframes = []
+        
+        for file_name, uploaded_file in st.session_state.uploaded_files.items():
+            try:
+                uploaded_file.seek(0) # Rewind the file pointer for reading
+                
+                if file_name.endswith('.csv'):
+                    try:
+                        df_temp = pd.read_csv(uploaded_file, sep=';', decimal=',', encoding='utf-8')
+                    except:
+                        uploaded_file.seek(0)
+                        df_temp = pd.read_csv(uploaded_file, sep=',', decimal='.', encoding='utf-8')
+                elif file_name.endswith('.xlsx'):
+                    df_temp = pd.read_excel(uploaded_file)
+                
+                if not df_temp.empty:
+                    all_dataframes.append(df_temp)
+                    
+            except Exception as e:
+                st.error(f"Erro ao ler o arquivo {file_name}: {e}")
+
+        # Concatena todos os dataframes válidos
+        if all_dataframes:
+            df_novo = pd.concat(all_dataframes, ignore_index=True)
+        
+        # Continuação da Lógica de Processamento (usando o df_novo consolidado)
+        
+        if df_novo.empty:
+            st.error("Nenhum dado válido foi lido dos arquivos carregados.")
+            st.session_state.dados_atuais = pd.DataFrame() 
+        else:
             df_novo.columns = df_novo.columns.str.strip().str.lower()
             colunas_disponiveis = df_novo.columns.tolist()
-            st.info(f"Arquivo carregado! ({len(df_novo)} linhas)")
+            st.info(f"Dados consolidados de {len(st.session_state.uploaded_files)} arquivos. Total de {len(df_novo)} linhas.")
+            
             moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
-            if uploaded_file is not None and ('_last_uploaded_name' not in st.session_state or st.session_state._last_uploaded_name != uploaded_file.name):
-                keys_to_reset = ['moeda_select', 'texto_select', 'filtros_select']
-                for key in keys_to_reset:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                initialize_widget_state('moeda_select', colunas_disponiveis, moeda_default)
-                initialize_widget_state('texto_select', colunas_disponiveis, [])
-                st.session_state._last_uploaded_name = uploaded_file.name
+            
+            # Reset de estado se for a primeira vez processando este conjunto
             if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', colunas_disponiveis, moeda_default)
             if 'texto_select' not in st.session_state: initialize_widget_state('texto_select', colunas_disponiveis, [])
+            
             st.markdown("##### 💰 Colunas de VALOR (R$)")
             col_moeda_sel_btn, col_moeda_clr_btn = st.columns(2)
             with col_moeda_sel_btn:
@@ -119,11 +172,13 @@ with st.sidebar:
                 st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('texto_select'), key='texto_select_clear_btn', use_container_width=True)
             colunas_texto = st.multiselect("Selecione:", options=colunas_disponiveis, default=st.session_state.texto_select, key='texto_select', label_visibility="collapsed")
             st.markdown("---")
+            
             df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
             colunas_para_filtro_options = df_processado.select_dtypes(include=['object', 'category']).columns.tolist()
             filtro_default = [c for c in colunas_para_filtro_options if c in ['tipo', 'situacao', 'empresa', 'departamento']]
             if 'filtros_select' not in st.session_state:
                 initialize_widget_state('filtros_select', colunas_para_filtro_options, filtro_default)
+            
             st.markdown("##### ⚙️ Colunas para FILTROS")
             col_filtro_sel_btn, col_filtro_clr_btn = st.columns(2)
             with col_filtro_sel_btn:
@@ -131,8 +186,10 @@ with st.sidebar:
             with col_filtro_clr_btn:
                 st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('filtros_select'), key='filtros_select_clear_btn', use_container_width=True)
             colunas_para_filtro = st.multiselect("Selecione:", options=colunas_para_filtro_options, default=st.session_state.filtros_select, key='filtros_select', label_visibility="collapsed")
+            
             colunas_valor_dashboard = df_processado.select_dtypes(include=np.number).columns.tolist()
             st.markdown("---")
+            
             if st.button("✅ Processar e Exibir Dados Atuais"): 
                 if df_processado.empty:
                     st.error("O DataFrame está vazio após o processamento. Verifique o conteúdo do arquivo e as seleções de coluna.")
@@ -150,10 +207,13 @@ with st.sidebar:
                         limpar_filtros_salvos() 
                         st.session_state.df_filtrado = df_processado_salvo 
                         st.rerun() 
-        except ValueError as ve:
-             st.error(f"Erro de Validação: {ve}")
-        except Exception as e:
-            st.error(f"Erro no processamento do arquivo. Tente novamente ou verifique o formato: {e}")
+            
+        
+    else: # Caso nenhum arquivo esteja carregado
+        st.info("Carregue um ou mais arquivos CSV/XLSX para iniciar o processamento.")
+
+
+# --- Início do Dashboard ---
 
 if st.session_state.dados_atuais.empty: 
     st.markdown("---")
@@ -189,7 +249,7 @@ else:
     st.markdown("#### 🔍 Filtros de Análise Rápida")
     current_selections = {}
     
-    # --- NOVO: Multiselects e Botões fora do form para permitir on_click (rerun) ---
+    # --- Multiselects e Botões fora do form para permitir on_click (rerun) ---
     colunas_filtro_a_exibir = colunas_categoricas_filtro 
     cols_container = st.columns(3) 
     filtros_col_1 = colunas_filtro_a_exibir[::3]
@@ -269,8 +329,6 @@ else:
     submitted = st.button("✅ Aplicar Filtros ao Dashboard", use_container_width=True)
 
     if submitted:
-        # Apenas forçar o rerun é suficiente, pois todos os widgets de filtro
-        # já salvaram seus valores na st.session_state (através de suas chaves)
         st.rerun() 
 
     @st.cache_data(show_spinner="Aplicando filtros...")
