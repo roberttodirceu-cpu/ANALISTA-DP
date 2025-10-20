@@ -5,6 +5,12 @@ import os
 import numpy as np
 from datetime import datetime
 from io import BytesIO
+
+# É esperado que o utils.py contenha:
+# - formatar_moeda
+# - inferir_e_converter_tipos
+# - encontrar_colunas_tipos
+# - verificar_ausentes
 from utils import formatar_moeda, inferir_e_converter_tipos, encontrar_colunas_tipos, verificar_ausentes
 
 st.set_page_config(layout="wide", page_title="Sistema de Análise de Indicadores Expert")
@@ -20,8 +26,10 @@ if 'colunas_valor_salvas' not in st.session_state:
     st.session_state.colunas_valor_salvas = []
 if 'filtro_reset_trigger' not in st.session_state:
     st.session_state['filtro_reset_trigger'] = 0
-if 'uploaded_files' not in st.session_state:
-    st.session_state.uploaded_files = {} # Armazena {file_name: file_object}
+    
+# CHAVE CRÍTICA: Armazena os dados dos arquivos subidos, garantindo persistência
+if 'uploaded_files_data' not in st.session_state:
+    st.session_state.uploaded_files_data = {} # Armazena {file_name: bytes_do_arquivo}
 
 def limpar_filtros_salvos():
     if 'df_filtrado' in st.session_state:
@@ -62,97 +70,113 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor):
     st.session_state.colunas_valor_salvas = colunas_valor
     return True, df_novo
 
+# Ação para remover um arquivo da lista
+def remove_file(file_name):
+    if file_name in st.session_state.uploaded_files_data:
+        del st.session_state.uploaded_files_data[file_name]
+        # Limpar os dados processados para forçar uma nova consolidação
+        st.session_state.dados_atuais = pd.DataFrame()
+        st.rerun()
+
 with st.sidebar:
     st.markdown("# 📊")
     st.title("⚙️ Configurações do Expert")
     if st.button("Limpar Cache de Dados"):
         st.cache_data.clear()
-        for key in list(st.session_state.keys()):
-            if not key.startswith('_'):
-                del st.session_state[key]
+        # Limpa todas as chaves de estado de sessão relacionadas a dados e filtros
+        keys_to_clear = [k for k in st.session_state.keys() if not k.startswith('_')]
+        for key in keys_to_clear:
+            del st.session_state[key]
         st.info("Cache de dados e estado da sessão limpos! Recarregando...")
         st.rerun()
 
-    st.header("1. Upload e Processamento de Dados")
+    st.header("1. Upload e Gerenciamento de Dados")
     
-    # NOVO: Permite múltiplos arquivos
-    uploaded_files_new = st.file_uploader("📥 Carregar Novo(s) CSV/XLSX", type=['csv', 'xlsx'], accept_multiple_files=True)
-    
-    # Lógica para adicionar novos arquivos à lista de arquivos da sessão
-    if uploaded_files_new:
-        for file in uploaded_files_new:
-            # Garante que o arquivo só é adicionado uma vez
-            if file.name not in st.session_state.uploaded_files:
-                st.session_state.uploaded_files[file.name] = file
-
-    df_novo = pd.DataFrame()
-    
-    if st.session_state.uploaded_files:
+    # st.file_uploader dentro de um form para que o upload não dispare rerun a cada vez
+    with st.form("file_upload_form", clear_on_submit=True):
+        uploaded_files_new = st.file_uploader(
+            "📥 Carregar Novo(s) CSV/XLSX", 
+            type=['csv', 'xlsx'], 
+            accept_multiple_files=True,
+            key="file_uploader_widget" # Chave para o widget em si
+        )
+        submit_upload = st.form_submit_button("Adicionar Arquivo(s) à Lista")
         
-        # --- NOVO: Exibir e Remover Arquivos ---
+        if submit_upload and uploaded_files_new:
+            newly_added = []
+            for file in uploaded_files_new:
+                # Armazena o conteúdo do arquivo como bytes para persistência
+                st.session_state.uploaded_files_data[file.name] = file.read()
+                newly_added.append(file.name)
+            st.success(f"Arquivos adicionados: {', '.join(newly_added)}")
+            st.rerun()
+
+    # --- NOVO: Exibir e Remover Arquivos ---
+    if st.session_state.uploaded_files_data:
         st.markdown("---")
         st.markdown("##### Arquivos Carregados para Processamento:")
         
-        files_to_remove = []
-        
-        # Itera sobre arquivos atualmente no estado da sessão
-        for file_name, file_object in st.session_state.uploaded_files.items():
+        for file_name in st.session_state.uploaded_files_data.keys():
             col_file, col_remove = st.columns([4, 1])
             with col_file:
-                st.markdown(f"- **{file_name}** ({file_object.size / (1024*1024):.2f} MB)")
+                # Exibe o nome do arquivo
+                st.caption(f"- **{file_name}**")
             with col_remove:
-                # Botão de remoção com chave única
-                if st.button("Remover", key=f"remove_file_{file_name}", use_container_width=True):
-                    files_to_remove.append(file_name)
-        
-        # Processa as remoções e força o rerun
-        if files_to_remove:
-            for file_name in files_to_remove:
-                del st.session_state.uploaded_files[file_name]
-            st.info(f"Arquivo(s) removido(s): {', '.join(files_to_remove)}. Recarregando...")
-            st.rerun()
+                # Botão de remoção com chave única, chamando a função de callback
+                st.button("Remover", 
+                          key=f"remove_file_btn_{file_name}", 
+                          on_click=remove_file, 
+                          args=(file_name,), 
+                          use_container_width=True)
         
         st.markdown("---")
+
+    # --- Lógica de Processamento e Consolidação (Somente se houver arquivos) ---
+    
+    if st.session_state.uploaded_files_data:
         
-        # --- NOVO: Leitura e Concatenação dos Arquivos ---
         all_dataframes = []
         
-        for file_name, uploaded_file in st.session_state.uploaded_files.items():
+        # Leitura e Concatenação dos Arquivos Armazenados
+        for file_name, file_bytes in st.session_state.uploaded_files_data.items():
             try:
-                uploaded_file.seek(0) # Rewind the file pointer for reading
+                # Usa BytesIO para ler o conteúdo binário (bytes)
+                uploaded_file_stream = BytesIO(file_bytes)
                 
                 if file_name.endswith('.csv'):
                     try:
-                        df_temp = pd.read_csv(uploaded_file, sep=';', decimal=',', encoding='utf-8')
-                    except:
-                        uploaded_file.seek(0)
-                        df_temp = pd.read_csv(uploaded_file, sep=',', decimal='.', encoding='utf-8')
+                        # Tenta ler com o padrão brasileiro (separador=;, decimal=,)
+                        df_temp = pd.read_csv(uploaded_file_stream, sep=';', decimal=',', encoding='utf-8')
+                    except Exception:
+                        uploaded_file_stream.seek(0)
+                        # Tenta ler com o padrão americano (separador=,, decimal=.)
+                        df_temp = pd.read_csv(uploaded_file_stream, sep=',', decimal='.', encoding='utf-8')
                 elif file_name.endswith('.xlsx'):
-                    df_temp = pd.read_excel(uploaded_file)
+                    df_temp = pd.read_excel(uploaded_file_stream)
                 
                 if not df_temp.empty:
                     all_dataframes.append(df_temp)
                     
             except Exception as e:
-                st.error(f"Erro ao ler o arquivo {file_name}: {e}")
+                st.error(f"Erro ao ler o arquivo {file_name} durante a consolidação. Verifique o formato: {e}")
 
-        # Concatena todos os dataframes válidos
+        # Consolida todos os dataframes válidos
         if all_dataframes:
             df_novo = pd.concat(all_dataframes, ignore_index=True)
         
-        # Continuação da Lógica de Processamento (usando o df_novo consolidado)
-        
+        # Continuação da Lógica de Seleção de Colunas
         if df_novo.empty:
-            st.error("Nenhum dado válido foi lido dos arquivos carregados.")
+            st.error("O conjunto de dados consolidado está vazio.")
             st.session_state.dados_atuais = pd.DataFrame() 
         else:
             df_novo.columns = df_novo.columns.str.strip().str.lower()
             colunas_disponiveis = df_novo.columns.tolist()
-            st.info(f"Dados consolidados de {len(st.session_state.uploaded_files)} arquivos. Total de {len(df_novo)} linhas.")
+            st.info(f"Dados consolidados de {len(st.session_state.uploaded_files_data)} arquivos. Total de {len(df_novo)} linhas.")
             
+            # Sugestão de colunas de valor
             moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
             
-            # Reset de estado se for a primeira vez processando este conjunto
+            # Inicialização segura dos seletores (para não perder o estado)
             if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', colunas_disponiveis, moeda_default)
             if 'texto_select' not in st.session_state: initialize_widget_state('texto_select', colunas_disponiveis, [])
             
@@ -163,6 +187,7 @@ with st.sidebar:
             with col_moeda_clr_btn:
                 st.button("🗑️ Limpar", on_click=lambda: set_multiselect_none('moeda_select'), key='moeda_select_clear_btn', use_container_width=True)
             colunas_moeda = st.multiselect("Selecione:", options=colunas_disponiveis, default=st.session_state.moeda_select, key='moeda_select', label_visibility="collapsed")
+            
             st.markdown("---")
             st.markdown("##### 📝 Colunas TEXTO/ID")
             col_texto_sel_btn, col_texto_clr_btn = st.columns(2)
