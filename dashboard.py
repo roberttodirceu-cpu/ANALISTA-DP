@@ -9,39 +9,33 @@ from io import BytesIO
 # Importa as funções do utils.py
 from utils import formatar_moeda, inferir_e_converter_tipos, encontrar_colunas_tipos, verificar_ausentes
 
+# --- Configuração da Página e Persistência de Dados ---
 st.set_page_config(layout="wide", page_title="Sistema de Análise de Indicadores Expert")
+
+# Aviso sobre persistência (Streamlit Cloud/Share reinicia o app e limpa o estado)
+st.sidebar.warning("⚠️ **Persistência de Dados:** Em ambientes como Streamlit Cloud, o estado da sessão pode ser limpo após 10 minutos de inatividade ou reinicialização. Use o botão 'Limpar Cache de Dados' apenas se necessário.")
 
 # --- Inicialização de Estado da Sessão ---
 
-# Dados atualmente exibidos no Dashboard
+# 2. PERSISTÊNCIA: A chave 'data_sets_catalog' e 'uploaded_files_data' agora são as chaves de dados persistentes.
+if 'data_sets_catalog' not in st.session_state:
+    st.session_state.data_sets_catalog = {} # Armazena {nome_do_dataset: {'df': df, 'filtros': [], 'valores': []}}
+if 'uploaded_files_data' not in st.session_state:
+    st.session_state.uploaded_files_data = {} # Armazena {file_name: bytes_do_arquivo}
+
+# As demais chaves de estado (variáveis de trabalho da sessão atual)
 if 'dados_atuais' not in st.session_state:
     st.session_state.dados_atuais = pd.DataFrame() 
 if 'df_filtrado' not in st.session_state:
     st.session_state.df_filtrado = pd.DataFrame() 
-
-# Configurações de coluna do dataset ativo
 if 'colunas_filtros_salvas' not in st.session_state:
     st.session_state.colunas_filtros_salvas = []
 if 'colunas_valor_salvas' not in st.session_state:
     st.session_state.colunas_valor_salvas = []
-
-# Trigger para forçar o reset dos widgets de filtro (multiselect/date slider)
 if 'filtro_reset_trigger' not in st.session_state:
     st.session_state['filtro_reset_trigger'] = 0
-    
-# Catálogo de arquivos BINÁRIOS (para uploads) - Persistência dos arquivos subidos
-if 'uploaded_files_data' not in st.session_state:
-    st.session_state.uploaded_files_data = {} # Armazena {file_name: bytes_do_arquivo}
-
-# Catálogo de DataFrames PROCESSADOS (para troca rápida)
-if 'data_sets_catalog' not in st.session_state:
-    st.session_state.data_sets_catalog = {} # Armazena {nome_do_dataset: {'df': df, 'filtros': [], 'valores': []}}
-    
-# Nome do dataset ativo no dashboard
 if 'current_dataset_name' not in st.session_state:
     st.session_state.current_dataset_name = ""
-    
-# NOVO: Estado para controlar a exibição da seção de reconfiguração de colunas
 if 'show_reconfig_section' not in st.session_state:
     st.session_state.show_reconfig_section = False
 
@@ -54,10 +48,9 @@ def limpar_filtros_salvos():
         
     st.session_state['filtro_reset_trigger'] += 1
     
-    # Limpa as chaves de sessão dos multiselects/sliders
     chaves_a_limpar = [
         key for key in st.session_state.keys() 
-        if key.startswith('filtro_key_') or key.startswith('date_range_key_')
+        if key.startswith('filtro_key_') or key.startswith('date_range_key_') or key.startswith('grafico_key_')
     ]
     for key in chaves_a_limpar:
         try:
@@ -86,20 +79,16 @@ def initialize_widget_state(key, options, initial_default_calc):
 def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name):
     """Salva o dataset processado no catálogo e define como ativo."""
     
-    # NOVO AJUSTE: Remove a extensão dos arquivos pendentes para usar o nome base
     if st.session_state.uploaded_files_data:
         file_names = list(st.session_state.uploaded_files_data.keys())
         if len(file_names) == 1:
-            # Se for apenas um arquivo, usa o nome dele sem extensão
             base_name = os.path.splitext(file_names[0])[0]
         else:
-             # Se for consolidado, mantém o nome digitado/sugerido
              base_name = dataset_name
     else:
-        # Se não houver pendentes, usa o nome digitado/sugerido (caso de reprocessamento)
         base_name = dataset_name
         
-    # Salva o resultado no catálogo
+    # Salva o resultado no catálogo persistente
     st.session_state.data_sets_catalog[base_name] = {
         'df': df_novo,
         'colunas_filtros_salvas': colunas_filtros,
@@ -109,17 +98,16 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name
     st.session_state.dados_atuais = df_novo 
     st.session_state.colunas_filtros_salvas = colunas_filtros
     st.session_state.colunas_valor_salvas = colunas_valor
-    st.session_state.current_dataset_name = base_name # Salva o nome do dataset ativo
+    st.session_state.current_dataset_name = base_name 
     return True, df_novo
 
 def remove_file(file_name):
     """Remove um arquivo da lista de uploads pendentes."""
     if file_name in st.session_state.uploaded_files_data:
         del st.session_state.uploaded_files_data[file_name]
-        # Se remover um arquivo, esvazia o dashboard para forçar novo processamento
         st.session_state.dados_atuais = pd.DataFrame()
         st.session_state.current_dataset_name = ""
-        st.session_state.show_reconfig_section = False # Esconde a seção de reconfiguração
+        st.session_state.show_reconfig_section = False
         st.rerun()
 
 def switch_dataset(dataset_name):
@@ -130,8 +118,8 @@ def switch_dataset(dataset_name):
         st.session_state.colunas_filtros_salvas = data['colunas_filtros_salvas']
         st.session_state.colunas_valor_salvas = data['colunas_valor_salvas']
         st.session_state.current_dataset_name = dataset_name
-        limpar_filtros_salvos() # Reseta apenas os filtros de seleção
-        st.session_state.show_reconfig_section = False # Esconde a seção de reconfiguração
+        limpar_filtros_salvos()
+        st.session_state.show_reconfig_section = False
         st.rerun()
     else:
         st.error(f"Dataset '{dataset_name}' não encontrado.")
@@ -139,15 +127,17 @@ def switch_dataset(dataset_name):
 def show_reconfig_panel():
     """Define o estado para exibir a seção de configuração de colunas."""
     st.session_state.show_reconfig_section = True
-    # Não precisa de rerun aqui, pois o clique já dispara o rerun
 
 # --- SIDEBAR (CONFIGURAÇÕES E UPLOAD) ---
 
 with st.sidebar:
     st.markdown("# 📊")
     st.title("⚙️ Configurações do Expert")
+    
+    # Adicionando botão de limpeza para o catálogo de dados (para corrigir erros)
     if st.button("Limpar Cache de Dados"):
         st.cache_data.clear()
+        # Limpa todas as chaves, incluindo os catálogos
         keys_to_clear = [k for k in st.session_state.keys() if not k.startswith('_')]
         for key in keys_to_clear:
             del st.session_state[key]
@@ -156,7 +146,7 @@ with st.sidebar:
 
     st.header("1. Upload e Gerenciamento de Dados")
     
-    # Form para adicionar arquivos e nomear o dataset (limpa o uploader após submeter)
+    # Form para adicionar arquivos e nomear o dataset 
     with st.form("file_upload_form", clear_on_submit=True):
         uploaded_files_new = st.file_uploader(
             "📥 Carregar Novo(s) CSV/XLSX", 
@@ -175,7 +165,6 @@ with st.sidebar:
                 st.session_state.uploaded_files_data[file.name] = file.read()
                 newly_added.append(file.name)
             st.success(f"Arquivos adicionados: {', '.join(newly_added)}. Clique em 'Processar' abaixo.")
-            # Quando adiciona arquivos, automaticamente abre a seção de reconfiguração
             st.session_state.show_reconfig_section = True 
             st.rerun()
 
@@ -184,7 +173,6 @@ with st.sidebar:
         st.markdown("---")
         st.markdown("##### Arquivos Pendentes para Processamento:")
         
-        # NOVO BOTÃO para reabrir a seção de configuração
         st.button("🔁 Reconfigurar e Processar", 
                   on_click=show_reconfig_panel,
                   key='reconfig_btn_sidebar',
@@ -205,17 +193,14 @@ with st.sidebar:
         
         st.markdown("---")
         
-        # Lógica para mostrar a seção de configuração (2. Lógica de Processamento)
-        # A seção só aparece se houver arquivos pendentes E o estado 'show_reconfig_section' for True
         if st.session_state.show_reconfig_section:
             
-            df_novo = pd.DataFrame() # DataFrame consolidado
+            df_novo = pd.DataFrame()
             all_dataframes = []
             
             for file_name, file_bytes in st.session_state.uploaded_files_data.items():
                 try:
                     uploaded_file_stream = BytesIO(file_bytes)
-                    
                     if file_name.endswith('.csv'):
                         try:
                             df_temp = pd.read_csv(uploaded_file_stream, sep=';', decimal=',', encoding='utf-8')
@@ -294,9 +279,8 @@ with st.sidebar:
                             
                             st.success(f"Dataset '{st.session_state.current_dataset_name}' processado e salvo no catálogo!")
                             
-                            # Limpa os arquivos de upload após o processamento bem-sucedido
                             st.session_state.uploaded_files_data = {} 
-                            st.session_state.show_reconfig_section = False # Esconde a seção de reconfiguração
+                            st.session_state.show_reconfig_section = False
                             
                             st.balloons()
                             limpar_filtros_salvos() 
@@ -312,12 +296,13 @@ with st.sidebar:
 
 st.markdown("---") 
 
-# NOVO: Geração dos Botões de Troca de Dataset
+# Geração dos Botões de Troca de Dataset
 if st.session_state.data_sets_catalog:
     st.subheader("🔁 Datasets Salvos")
     
     dataset_names = list(st.session_state.data_sets_catalog.keys())
-    cols = st.columns(min(len(dataset_names), 4))
+    # Limita a 4 colunas para manter o layout
+    cols = st.columns(min(len(dataset_names), 4)) 
     
     for i, name in enumerate(dataset_names):
         is_active = name == st.session_state.current_dataset_name
@@ -472,93 +457,164 @@ else:
     st.markdown("---")
     st.subheader("📈 Análise Visual (Gráficos) ")
 
-    # --- Gráficos (Lógica mantida) ---
+    # --- NOVO: Configuração Multi-Dimensional dos Gráficos ---
+    col_config_x, col_config_color = st.columns(2)
+    
+    colunas_categoricas_para_grafico = ['Nenhuma (Total)'] + colunas_categoricas_filtro
+    
+    with col_config_x:
+        # Coluna para Agrupamento (Eixo X ou Categorias Principais)
+        coluna_x_fixa = st.selectbox(
+            "Agrupar/Comparar por (Eixo X):", 
+            options=colunas_categoricas_para_grafico, 
+            index=colunas_categoricas_para_grafico.index(coluna_agrupamento_principal) if coluna_agrupamento_principal in colunas_categoricas_para_grafico else 0,
+            key='grafico_key_eixo_x'
+        )
+    
+    with col_config_color:
+        # Coluna para Quebra/Cor (Análise em Múltiplas Referências)
+        colunas_quebra_opcoes = ['Nenhuma'] + [c for c in colunas_categoricas_filtro if c != coluna_x_fixa and c != 'Nenhuma (Total)']
+        coluna_quebra_cor = st.selectbox(
+            "Quebrar Análise/Cor por:", 
+            options=colunas_quebra_opcoes, 
+            index=0,
+            key='grafico_key_quebra_cor',
+            help="Use para comparar a métrica principal entre diferentes grupos (ex: Centro de Custo em diferentes Empresas)."
+        )
+
+    st.markdown("---") 
+
+    # --- Gráfico 1 (Comparação/Distribuição) ---
     col_graph_1, col_graph_2 = st.columns(2)
-    opcoes_graficos_base = ['Comparação (Barra)', 'Composição (Pizza)', 'Série Temporal (Linha)', 'Distribuição (Histograma)', 'Estatística Descritiva (Box Plot)']
-    coluna_x_fixa = coluna_agrupamento_principal if coluna_agrupamento_principal else 'Nenhuma Chave Categórica Encontrada' 
-    coluna_y_fixa = coluna_metrica_principal
     
     with col_graph_1:
-        st.markdown(f"##### Agrupamento por: **{coluna_x_fixa}**")
-        tipo_grafico_1 = st.selectbox("Tipo de Visualização (Gráfico 1):", options=[o for o in opcoes_graficos_base if 'Dispersão' not in o and 'Série Temporal' not in o], index=0, key='tipo_grafico_1')
-        if coluna_x_fixa not in ['Nenhuma Chave Categórica Encontrada'] and not df_analise.empty:
-            eixo_x_real = coluna_x_fixa
+        st.markdown(f"##### Gráfico 1: Comparação por **{coluna_x_fixa}**")
+        opcoes_grafico_1 = ['Comparação (Barra)', 'Composição (Pizza)', 'Estatística Descritiva (Box Plot)']
+        
+        # Remove opções que exigem coluna numérica se a métrica for Contagem
+        if coluna_metrica_principal == 'Contagem de Registros':
+            opcoes_grafico_1 = [o for o in opcoes_grafico_1 if 'Box Plot' not in o]
+
+        tipo_grafico_1 = st.selectbox("Tipo de Visualização (Gráfico 1):", options=opcoes_grafico_1, index=0, key='tipo_grafico_1')
+
+        if not df_analise.empty:
+            eixo_x_real = None if coluna_x_fixa == 'Nenhuma (Total)' else coluna_x_fixa
+            color_real = None if coluna_quebra_cor == 'Nenhuma' else coluna_quebra_cor
+            
             fig = None
             try:
-                if tipo_grafico_1 in ['Comparação (Barra)', 'Composição (Pizza)']:
-                    if coluna_y_fixa == 'Contagem de Registros':
-                        df_agg = df_analise.groupby(eixo_x_real, as_index=False).size().rename(columns={'size': 'Contagem'})
+                # Lógica de Agregação
+                if eixo_x_real:
+                    if coluna_metrica_principal == 'Contagem de Registros':
+                        agg_cols = [eixo_x_real]
+                        if color_real: agg_cols.append(color_real)
+                        df_agg = df_analise.groupby(agg_cols, as_index=False).size().rename(columns={'size': 'Contagem'})
                         y_col_agg = 'Contagem'
                     else:
-                        df_agg = df_analise.groupby(eixo_x_real, as_index=False)[coluna_y_fixa].sum()
-                        y_col_agg = coluna_y_fixa
-                    if tipo_grafico_1 == 'Comparação (Barra)':
-                        fig = px.bar(df_agg, x=eixo_x_real, y=y_col_agg, title=f'Total de {y_col_agg} por {eixo_x_real}')
-                    elif tipo_grafico_1 == 'Composição (Pizza)':
-                        fig = px.pie(df_agg, names=eixo_x_real, values=y_col_agg, title=f'Composição de {y_col_agg} por {eixo_x_real}')
-                elif tipo_grafico_1 == 'Estatística Descritiva (Box Plot)':
-                    if coluna_y_fixa != 'Contagem de Registros' and coluna_y_fixa in colunas_numericas_salvas:
-                        fig = px.box(df_analise, x=eixo_x_real, y=coluna_y_fixa, title=f'Distribuição de {coluna_y_fixa} por {eixo_x_real}')
+                        agg_cols = [eixo_x_real]
+                        if color_real: agg_cols.append(color_real)
+                        df_agg = df_analise.groupby(agg_cols, as_index=False)[coluna_metrica_principal].sum()
+                        y_col_agg = coluna_metrica_principal
+                else: # Nenhuma (Total) - Usar a cor como eixo X, se existir
+                    if color_real:
+                        if coluna_metrica_principal == 'Contagem de Registros':
+                            df_agg = df_analise.groupby(color_real, as_index=False).size().rename(columns={'size': 'Contagem'})
+                            y_col_agg = 'Contagem'
+                        else:
+                            df_agg = df_analise.groupby(color_real, as_index=False)[coluna_metrica_principal].sum()
+                            y_col_agg = coluna_metrica_principal
+                        eixo_x_real = color_real
+                        color_real = None # Se a quebra virou o eixo X, a cor não se aplica
+                    elif coluna_metrica_principal != 'Contagem de Registros':
+                        # Para Box Plot ou Histograma (Gráfico 2) sem agrupamento/quebra, não precisa de agregação
+                        eixo_x_real = None 
+                        y_col_agg = coluna_metrica_principal
                     else:
-                         st.warning("Selecione Coluna de Valor Numérica para Box Plot.")
-                elif tipo_grafico_1 == 'Distribuição (Histograma)':
-                    if coluna_y_fixa in colunas_numericas_salvas:
-                         fig = px.histogram(df_analise, x=coluna_y_fixa, color=eixo_x_real, title=f'Distribuição de {coluna_y_fixa} por {eixo_x_real}')
-                    else:
-                         st.warning("Selecione Coluna de Valor Numérica para Histograma.")
+                        st.info("Selecione um agrupamento ou quebra para este tipo de gráfico.")
+                        st.stop()
+                
+                # Geração do Gráfico
+                if tipo_grafico_1 == 'Comparação (Barra)' and eixo_x_real:
+                    fig = px.bar(df_agg, x=eixo_x_real, y=y_col_agg, color=color_real, 
+                                 title=f'Soma de {y_col_agg} por {eixo_x_real}{" e " + color_real if color_real else ""}')
+                elif tipo_grafico_1 == 'Composição (Pizza)' and eixo_x_real:
+                    fig = px.pie(df_agg, names=eixo_x_real, values=y_col_agg, color=color_real, 
+                                 title=f'Composição de {y_col_agg} por {eixo_x_real}', hole=0.3)
+                elif tipo_grafico_1 == 'Estatística Descritiva (Box Plot)' and eixo_x_real:
+                    fig = px.box(df_analise, x=eixo_x_real, y=coluna_metrica_principal, color=color_real,
+                                 title=f'Distribuição de {coluna_metrica_principal} por {eixo_x_real}')
+                
                 if fig:
-                    fig.update_layout(hovermode="x unified", title_x=0.5, margin=dict(t=50, b=50, l=50, r=50)) 
+                    fig.update_layout(hovermode="x unified", title_x=0.5, margin=dict(t=50, b=50, l=50, r=50))
                     st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Gráfico não gerado. Verifique as configurações de Eixo X e Tipo de Gráfico.")
+
             except Exception as e:
-                st.error(f"Erro ao gerar o Gráfico 1. Erro: {e}")
+                st.error(f"Erro ao gerar o Gráfico 1: {e}")
         else:
-            st.warning("Dados não carregados ou Colunas de Filtro não selecionadas.")
+            st.warning("O DataFrame está vazio após a aplicação dos filtros.")
             
+    # --- Gráfico 2 (Série Temporal/Distribuição/Dispersão) ---
     with col_graph_2:
-        st.markdown(f"##### Métrica Principal: **{coluna_y_fixa}**")
-        opcoes_grafico_2 = ['Série Temporal (Linha)', 'Distribuição (Histograma)']
-        if coluna_y_fixa != 'Contagem de Registros' and coluna_y_fixa in colunas_numericas_salvas:
+        st.markdown(f"##### Gráfico 2: Foco em **{coluna_metrica_principal}**")
+        opcoes_grafico_2 = ['Distribuição (Histograma)']
+        
+        if colunas_data:
+            opcoes_grafico_2.append('Série Temporal (Linha)')
+            
+        if coluna_metrica_principal != 'Contagem de Registros' and len(colunas_numericas_salvas) > 1:
             opcoes_grafico_2.append('Relação (Dispersão)')
-        if not colunas_data:
-            opcoes_grafico_2 = [o for o in opcoes_grafico_2 if 'Série Temporal' not in o]
+            
         tipo_grafico_2 = st.selectbox("Tipo de Visualização (Gráfico 2):", options=opcoes_grafico_2, index=0, key='tipo_grafico_2')
         
         if not df_analise.empty:
             fig = None
             try:
-                if tipo_grafico_2 == 'Série Temporal (Linha)':
-                    if colunas_data and colunas_data[0] in df_analise.columns:
-                        eixo_x_data = colunas_data[0]
-                        if coluna_y_fixa != 'Contagem de Registros':
-                             df_agg = df_analise.groupby(eixo_x_data, as_index=False)[coluna_y_fixa].sum()
-                             y_col_agg = coluna_y_fixa
-                             fig = px.line(df_agg, x=eixo_x_data, y=y_col_agg, title=f'Tendência Temporal: Soma de {coluna_y_fixa}')
-                        else:
-                             df_agg = df_analise.groupby(eixo_x_data, as_index=False).size().rename(columns={'size': 'Contagem'})
-                             y_col_agg = 'Contagem'
-                             fig = px.line(df_agg, x=eixo_x_data, y=y_col_agg, title='Tendência Temporal: Contagem de Registros')
+                if tipo_grafico_2 == 'Série Temporal (Linha)' and colunas_data:
+                    eixo_x_data = colunas_data[0]
+                    color_real = None if coluna_quebra_cor == 'Nenhuma' else coluna_quebra_cor
+                    
+                    if coluna_metrica_principal == 'Contagem de Registros':
+                         agg_cols = [eixo_x_data]
+                         if color_real: agg_cols.append(color_real)
+                         df_agg = df_analise.groupby(agg_cols, as_index=False).size().rename(columns={'size': 'Contagem'})
+                         y_col_agg = 'Contagem'
                     else:
-                        st.warning("Coluna de Data/Hora não encontrada para Série Temporal.")
+                         agg_cols = [eixo_x_data]
+                         if color_real: agg_cols.append(color_real)
+                         df_agg = df_analise.groupby(agg_cols, as_index=False)[coluna_metrica_principal].sum()
+                         y_col_agg = coluna_metrica_principal
+                         
+                    fig = px.line(df_agg, x=eixo_x_data, y=y_col_agg, color=color_real,
+                                  title=f'Tendência Temporal: Soma de {y_col_agg}{" por " + color_real if color_real else ""}')
+                    
                 elif tipo_grafico_2 == 'Distribuição (Histograma)':
-                    if coluna_y_fixa in colunas_numericas_salvas:
-                        fig = px.histogram(df_analise, x=coluna_y_fixa, title=f'Distribuição de Frequência de {coluna_y_fixa}')
+                    if coluna_metrica_principal != 'Contagem de Registros':
+                        color_real = None if coluna_quebra_cor == 'Nenhuma' else coluna_quebra_cor
+                        fig = px.histogram(df_analise, x=coluna_metrica_principal, color=color_real,
+                                           title=f'Distribuição de {coluna_metrica_principal}{" por " + color_real if color_real else ""}')
                     else:
                         st.warning("Selecione Coluna de Valor Numérica para Histograma.")
-                elif tipo_grafico_2 == 'Relação (Dispersão)':
-                    if len(colunas_numericas_salvas) > 1 and coluna_y_fixa != 'Contagem de Registros':
-                        colunas_para_dispersao = [c for c in colunas_numericas_salvas if c != coluna_y_fixa]
-                        if colunas_para_dispersao:
-                            coluna_x_disp = st.selectbox("Selecione o Eixo X para Dispersão:", options=colunas_para_dispersao, key='col_x_disp')
-                            fig = px.scatter(df_analise, x=coluna_x_disp, y=coluna_y_fixa, title=f'Relação entre {coluna_x_disp} e {coluna_y_fixa}')
-                        else:
-                             st.warning("Necessário outra coluna numérica além da Métrica Principal para Dispersão.")
+                        
+                elif tipo_grafico_2 == 'Relação (Dispersão)' and coluna_metrica_principal != 'Contagem de Registros':
+                    colunas_para_dispersao = [c for c in colunas_numericas_salvas if c != coluna_metrica_principal]
+                    if colunas_para_dispersao:
+                        coluna_x_disp = st.selectbox("Selecione o Eixo X para Dispersão:", options=colunas_para_dispersao, key='col_x_disp')
+                        color_real = None if coluna_quebra_cor == 'Nenhuma' else coluna_quebra_cor
+                        fig = px.scatter(df_analise, x=coluna_x_disp, y=coluna_metrica_principal, color=color_real,
+                                         title=f'Relação entre {coluna_x_disp} e {coluna_metrica_principal}{" por " + color_real if color_real else ""}')
                     else:
-                        st.warning("Necessário mais de uma coluna numérica para Gráfico de Dispersão.")
+                         st.warning("Necessário outra coluna numérica para Gráfico de Dispersão.")
+
                 if fig:
                     fig.update_layout(hovermode="x unified", title_x=0.5, margin=dict(t=50, b=50, l=50, r=50))
                     st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Gráfico não gerado. Verifique as configurações de Eixo X e Tipo de Gráfico.")
+                    
             except Exception as e:
-                st.error(f"Erro ao gerar o Gráfico 2. Erro: {e}")
+                st.error(f"Erro ao gerar o Gráfico 2: {e}")
         else:
             st.warning("O DataFrame está vazio após a aplicação dos filtros.")
 
