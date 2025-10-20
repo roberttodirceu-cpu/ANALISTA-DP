@@ -188,84 +188,89 @@ else:
 
     st.markdown("#### 🔍 Filtros de Análise Rápida")
     current_selections = {}
-    form_key = f'dashboard_filters_form_{st.session_state.filtro_reset_trigger}' 
-    with st.form(key=form_key):
-        colunas_filtro_a_exibir = colunas_categoricas_filtro 
-        cols_container = st.columns(3) 
-        filtros_col_1 = colunas_filtro_a_exibir[::3]
-        filtros_col_2 = colunas_filtro_a_exibir[1::3]
-        filtros_col_3 = colunas_filtro_a_exibir[2::3]
-        for idx, filtros_col in enumerate([filtros_col_1, filtros_col_2, filtros_col_3]):
-            with cols_container[idx]:
-                for col in filtros_col:
-                    if col not in df_analise_base.columns: continue
-                    opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
-                    
-                    # 1. Inicializa o estado com TODAS as opções salvas
-                    filtro_key = f'filtro_key_{col}'
-                    initialize_widget_state(filtro_key, opcoes_unicas, []) # Use [] para default ser nada selecionado
-                    
-                    with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
-                        # --- NOVO: Botões Selecionar Tudo/Limpar ---
-                        col_sel_btn, col_clr_btn = st.columns(2)
-                        with col_sel_btn:
-                            # 2. BOTÃO SELECIONAR TUDO
-                            st.button(
-                                "✅ Selecionar Tudo", 
-                                on_click=lambda c=filtro_key: set_multiselect_all(c), # Chama a função com a chave do filtro
-                                key=f'select_all_btn_{col}_{st.session_state.filtro_reset_trigger}', # Chave única dentro do form
-                                use_container_width=True
-                            )
-                        with col_clr_btn:
-                            # 3. BOTÃO LIMPAR
-                            st.button(
-                                "🗑️ Limpar", 
-                                on_click=lambda c=filtro_key: set_multiselect_none(c), 
-                                key=f'select_none_btn_{col}_{st.session_state.filtro_reset_trigger}', 
-                                use_container_width=True
-                            )
-                        st.markdown("---") # Separador visual
-                        
-                        # O multiselect AGORA usa o valor de st.session_state[filtro_key] como default
-                        selecao_padrao_form = st.session_state.get(filtro_key, [])
-                        multiselect_key = f'multiselect_{col}_{st.session_state.filtro_reset_trigger}'
-                        
-                        selecao = st.multiselect(
-                            "Selecione:", 
-                            options=opcoes_unicas, 
-                            default=selecao_padrao_form, 
-                            key=multiselect_key, 
-                            label_visibility="collapsed"
-                        )
-                        current_selections[col] = selecao
-                        # Salva a seleção atual do multiselect na session state (mantém o estado após o rerun do botão)
-                        st.session_state[filtro_key] = selecao
+    
+    # --- NOVO: Multiselects e Botões fora do form para permitir on_click (rerun) ---
+    colunas_filtro_a_exibir = colunas_categoricas_filtro 
+    cols_container = st.columns(3) 
+    filtros_col_1 = colunas_filtro_a_exibir[::3]
+    filtros_col_2 = colunas_filtro_a_exibir[1::3]
+    filtros_col_3 = colunas_filtro_a_exibir[2::3]
 
-        if colunas_data:
-            st.markdown("---")
-            col_data_padrao = colunas_data[0]
-            df_col_data = df_analise_base[col_data_padrao].dropna()
-            if not df_col_data.empty and pd.notna(df_col_data.min()) and pd.notna(df_col_data.max()):
-                data_min = df_col_data.min()
-                data_max = df_col_data.max()
-                try:
-                    default_date_range = st.session_state.get(f'date_range_key_{col_data_padrao}', (data_min.to_pydatetime(), data_max.to_pydatetime()))
-                    slider_key = f'slider_{col_data_padrao}_{st.session_state.filtro_reset_trigger}'
-                    st.markdown(f"#### 🗓️ Intervalo de Data ({col_data_padrao})")
-                    data_range = st.slider("", min_value=data_min.to_pydatetime(), max_value=data_max.to_pydatetime(), value=default_date_range, format="YYYY/MM/DD", key=slider_key, label_visibility="collapsed")
-                    current_selections[col_data_padrao] = data_range
-                except Exception:
-                    st.warning("Erro na exibição do filtro de data.")
-        st.markdown("---")
-        submitted = st.form_submit_button("✅ Aplicar Filtros ao Dashboard", use_container_width=True)
+    for idx, filtros_col in enumerate([filtros_col_1, filtros_col_2, filtros_col_3]):
+        with cols_container[idx]:
+            for col in filtros_col:
+                if col not in df_analise_base.columns: continue
+                opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('').unique().tolist())
+                
+                filtro_key = f'filtro_key_{col}'
+                # Inicializa o estado com TODAS as opções salvas
+                initialize_widget_state(filtro_key, opcoes_unicas, []) 
+                
+                with st.expander(f"**{col}** ({len(opcoes_unicas)} opções)"):
+                    # Botões Selecionar Tudo/Limpar
+                    col_sel_btn, col_clr_btn = st.columns(2)
+                    with col_sel_btn:
+                        # BOTÃO SELECIONAR TUDO (Dispara rerun imediatamente)
+                        st.button(
+                            "✅ Selecionar Tudo", 
+                            on_click=lambda c=filtro_key: set_multiselect_all(c),
+                            key=f'select_all_btn_{col}',
+                            use_container_width=True
+                        )
+                    with col_clr_btn:
+                        # BOTÃO LIMPAR (Dispara rerun imediatamente)
+                        st.button(
+                            "🗑️ Limpar", 
+                            on_click=lambda c=filtro_key: set_multiselect_none(c), 
+                            key=f'select_none_btn_{col}',
+                            use_container_width=True
+                        )
+                    st.markdown("---") # Separador visual
+                    
+                    # O multiselect usa a chave de sessão como default
+                    selecao_padrao_form = st.session_state.get(filtro_key, [])
+                    
+                    # Usa a chave 'filtro_key' diretamente para o multiselect
+                    selecao = st.multiselect(
+                        "Selecione:", 
+                        options=opcoes_unicas, 
+                        default=selecao_padrao_form, 
+                        key=filtro_key, 
+                        label_visibility="collapsed"
+                    )
+                    current_selections[col] = selecao
+
+    # --- Filtro de Data e Botão de Aplicar (Fora do Form) ---
+    st.markdown("---") 
+    
+    if colunas_data:
+        col_data_padrao = colunas_data[0]
+        df_col_data = df_analise_base[col_data_padrao].dropna()
+        if not df_col_data.empty and pd.notna(df_col_data.min()) and pd.notna(df_col_data.max()):
+            data_min = df_col_data.min()
+            data_max = df_col_data.max()
+            try:
+                default_date_range = st.session_state.get(f'date_range_key_{col_data_padrao}', (data_min.to_pydatetime(), data_max.to_pydatetime()))
+                
+                st.markdown(f"#### 🗓️ Intervalo de Data ({col_data_padrao})")
+                data_range = st.slider("", 
+                                        min_value=data_min.to_pydatetime(), 
+                                        max_value=data_max.to_pydatetime(), 
+                                        value=default_date_range, 
+                                        format="YYYY/MM/DD", 
+                                        key=f'date_range_key_{col_data_padrao}', # Salva o valor diretamente na session_state
+                                        label_visibility="collapsed")
+                current_selections[col_data_padrao] = data_range
+            except Exception:
+                st.warning("Erro na exibição do filtro de data.")
+    
+    st.markdown("---")
+    # Usa st.button() para aplicar os filtros e disparar o rerun
+    submitted = st.button("✅ Aplicar Filtros ao Dashboard", use_container_width=True)
+
     if submitted:
-        for col in colunas_categoricas_filtro:
-            if col in current_selections:
-                st.session_state[f'filtro_key_{col}'] = current_selections[col] 
-        if colunas_data and colunas_data[0] in current_selections:
-            col_data_padrao = colunas_data[0]
-            data_range = current_selections[col_data_padrao]
-            st.session_state[f'date_range_key_{col_data_padrao}'] = data_range 
+        # Apenas forçar o rerun é suficiente, pois todos os widgets de filtro
+        # já salvaram seus valores na st.session_state (através de suas chaves)
         st.rerun() 
 
     @st.cache_data(show_spinner="Aplicando filtros...")
@@ -294,10 +299,14 @@ else:
 
     filtros_ativos = {}
     for col in colunas_categoricas_filtro:
+        # Pega a seleção da session_state diretamente, onde o multiselect salvou
         selecao = st.session_state.get(f'filtro_key_{col}')
         if selecao is not None:
             filtros_ativos[col] = selecao
+            
+    # Pega o range de data da session_state
     data_range_ativo = st.session_state.get(f'date_range_key_{colunas_data[0]}', None) if colunas_data else None
+    
     df_analise = aplicar_filtros(df_analise_base, colunas_categoricas_filtro, filtros_ativos, colunas_data, data_range_ativo)
     st.session_state.df_filtrado = df_analise
 
