@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Correção da Lógica da Sidebar (v4.1)
+# app.py - Versão FINAL com CORREÇÃO CRÍTICA (Processamento Individual de Colunas)
 
 import streamlit as st
 import pandas as pd
@@ -297,7 +297,12 @@ def calcular_venc_desc(df):
     liquido = vencimentos - descontos 
     
     # Lógica de contagem de Funcionários Únicos
-    func_count = df_clean[col_func].astype(str).str.strip().replace('', np.nan).dropna().nunique()
+    # A contagem SÓ deve ocorrer se a coluna existir, caso contrário, será 0 (para os dados sem essa coluna)
+    if col_func not in df_clean.columns:
+         func_count = 0
+    else:
+        # Contagem: garante que apenas valores não vazios e únicos sejam contados
+        func_count = df_clean[col_func].astype(str).str.strip().replace('', np.nan).dropna().nunique()
 
     return vencimentos, descontos, liquido, func_count
 
@@ -305,6 +310,15 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     
     colunas_valor_salvas = st.session_state.colunas_valor_salvas
     
+    # -------------------------------------------------------------
+    # 0. VERIFICAÇÃO CRÍTICA DE COLUNA (Aviso Graceful, não Hard Stop)
+    # -------------------------------------------------------------
+    col_func = 'nome_funcionario'
+    if col_func not in df_completo.columns:
+        # APRESENTA O ERRO VISÍVEL AO USUÁRIO NO DASHBOARD, mas DEIXA o resto rodar
+        st.error(f"Aviso Crítico: A coluna '{col_func}' não foi encontrada no Dataset Ativo. A contagem de funcionários únicos será 0. Por favor, re-processe seu arquivo de Folha contendo esta coluna.")
+        st.markdown(f"Colunas atuais no Dataset: {df_completo.columns.tolist()}")
+
     # -------------------------------------------------------------
     # 1. ANÁLISE DE CONTEXTO E RÓTULOS DETALHADOS
     # -------------------------------------------------------------
@@ -329,13 +343,6 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     # 2. CALCULO DE VENCIMENTOS E DESCONTOS E FUNCIONÁRIOS ÚNICOS
     # -------------------------------------------------------------
     
-    col_func = 'nome_funcionario' # Chave para Funcionário Único
-    
-    # VERIFICAÇÃO DE FUNCIONÁRIOS ÚNICOS
-    if col_func not in df_completo.columns:
-        st.error(f"Erro Crítico: A coluna '{col_func}' não foi encontrada no DataFrame. O pré-processamento de nomes de coluna falhou. Limpe o cache e tente novamente. Colunas atuais: {df_completo.columns.tolist()}")
-        return
-
     # Base
     venc_base, desc_base, liq_base, func_base = calcular_venc_desc(df_base)
     
@@ -577,6 +584,7 @@ with st.sidebar:
             
             # --- LÓGICA DE CARREGAMENTO PARA CONCATENAÇÃO (SOMA DE DADOS) ---
             df_atual_base = pd.DataFrame()
+            target_col = 'nome_funcionario' # Coluna alvo
             dataset_name_to_use = st.session_state.get('current_dataset_name_input', f"Dataset Processado ({datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
             # --- NOVO SELETOR PARA CONCATENAÇÃO ---
@@ -604,6 +612,22 @@ with st.sidebar:
             if selected_dataset_to_sum != "Criar Novo Dataset (Substituir/Criar)":
                 if dataset_name_to_use in st.session_state.data_sets_catalog:
                     df_atual_base = st.session_state.data_sets_catalog[dataset_name_to_use]['df'].copy()
+                    
+                    # --- LIMPEZA E ALINHAMENTO DO DF BASE EXISTENTE ---
+                    raw_columns_base = df_atual_base.columns.copy()
+                    cleaned_columns_base = [limpar_nome_coluna(col) for col in raw_columns_base]
+                    df_atual_base.columns = cleaned_columns_base
+                    
+                    # Checa e alinha o df base para nome_funcionario
+                    if target_col not in df_atual_base.columns:
+                         employee_col_candidates_base = [col for col in cleaned_columns_base if 'nome' in col and 'func' in col]
+                         if employee_col_candidates_base:
+                             # Se o nome existe mas não está padronizado (erro improvável agora, mas garante)
+                             df_atual_base.rename(columns={employee_col_candidates_base[0]: target_col}, inplace=True)
+                         else:
+                             # Se a coluna não existe no df base (por algum motivo), a cria com NaN para alinhamento
+                             df_atual_base[target_col] = np.nan 
+                    # ----------------------------------------------------
                     
             # 2. Processa o(s) novo(s) arquivo(s)
             if not st.session_state.uploaded_files_data:
@@ -677,27 +701,41 @@ with st.sidebar:
                                 
                         
                         if df_temp is not None and not df_temp.empty: 
+                            
+                            # --- MODIFICAÇÃO CRÍTICA AQUI: Aplicar limpeza e renomeação por arquivo ---
+                            raw_columns = df_temp.columns.copy()
+                            cleaned_columns = [limpar_nome_coluna(col) for col in raw_columns]
+                            df_temp.columns = cleaned_columns
+                            colunas_disponiveis = df_temp.columns.tolist()
+
+                            if target_col not in colunas_disponiveis:
+                                # Tenta encontrar o nome de funcionário no arquivo atual
+                                employee_col_candidates = [col for col in colunas_disponiveis if 'nome' in col and 'func' in col]
+
+                                if employee_col_candidates:
+                                    original_candidate = employee_col_candidates[0]
+                                    df_temp.rename(columns={original_candidate: target_col}, inplace=True)
+                                    st.sidebar.info(f"Col. de Funcionário renomeada: '{original_candidate}' -> '{target_col}' em {file_name}")
+                                    colunas_disponiveis = df_temp.columns.tolist() 
+                                else:
+                                    # CRÍTICO: Se não encontrar, adiciona a coluna vazia para alinhar na concatenação
+                                    st.sidebar.warning(f"Aviso: Coluna '{target_col}' não encontrada em {file_name}. Criando coluna vazia.")
+                                    df_temp[target_col] = np.nan
+                            # ------------------------------------------------------------------------
+                            
                             all_dataframes.append(df_temp)
-    
+
                     except Exception as e:
                         st.error(f"Erro inesperado no processamento do arquivo {file_name}. Ele será ignorado. Detalhe: {e}")
                         pass 
-
+                
+                # Concatena todos os novos DataFrames processados
                 if all_dataframes:
                     df_novo_upload = pd.concat(all_dataframes, ignore_index=True)
                     
-                    # <------------------------- DEBUG DE LEITURA ------------------------->
-                    st.sidebar.warning(f"DEBUG: df_novo_upload (Dados Carregados) lido com {len(df_novo_upload)} linhas.")
-                    # <--------------------------------------------------------------------->
-
                     # 3. Concatena o novo upload com o dataset base existente, se houver
                     if not df_atual_base.empty:
-                        # Aplica a limpeza de colunas no DF atual para garantir que os nomes correspondam
-                        raw_columns_base = df_atual_base.columns.copy()
-                        cleaned_columns_base = [limpar_nome_coluna(col) for col in raw_columns_base]
-                        df_atual_base.columns = cleaned_columns
-                        
-                        # Concatena a base existente com o novo upload
+                        # Concatena a base existente (já limpa e alinhada) com o novo upload (já limpo e alinhado)
                         df_novo = pd.concat([df_atual_base, df_novo_upload], ignore_index=True)
                         st.sidebar.info(f"CONCATENAÇÃO: {len(df_atual_base)} (Existente) + {len(df_novo_upload)} (Novo) = {len(df_novo)} linhas totais.")
                     else:
@@ -708,28 +746,7 @@ with st.sidebar:
                 st.session_state.dados_atuais = pd.DataFrame() 
             else:
                 
-                # --- CORREÇÃO DE LIMPEZA MAIS ROBUSTA (Padronização de Colunas) ---
-                raw_columns = df_novo.columns.copy()
-                cleaned_columns = [limpar_nome_coluna(col) for col in raw_columns]
-                df_novo.columns = cleaned_columns
                 colunas_disponiveis = df_novo.columns.tolist()
-
-                # --- VERIFICAÇÃO E RENOMEAÇÃO FORÇADA DE 'NOME FUNCIONARIO' ---
-                target_col = 'nome_funcionario'
-                
-                if target_col not in colunas_disponiveis:
-                    employee_col_candidates = [col for col in colunas_disponiveis if 'nome' in col and 'func' in col]
-
-                    if employee_col_candidates:
-                        original_candidate = employee_col_candidates[0]
-                        df_novo.rename(columns={original_candidate: target_col}, inplace=True)
-                        st.sidebar.info(f"Col. de Funcionário renomeada: '{original_candidate}' -> '{target_col}'")
-                        colunas_disponiveis = df_novo.columns.tolist() 
-                    else:
-                        st.sidebar.warning("Aviso: Não foi possível identificar a coluna de nome de funcionário automaticamente.")
-                        
-                # --- FIM DA CORREÇÃO CRÍTICA ---
-                
                 st.info(f"Total de {len(df_novo)} linhas para configurar.")
                 
                 moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
@@ -830,6 +847,8 @@ else:
     
     # Colunas de data não são usadas para o SLIDER, mas ainda são necessárias para o rótulo
     _, colunas_data = encontrar_colunas_tipos(df_analise_completo) 
+    
+    # Não há mais a VERIFICAÇÃO CRÍTICA de parada total aqui, apenas a lógica de análise que lida com a ausência.
     
     st.markdown("#### 🔍 Configuração de Análise de Variação")
     col_reset_btn = st.columns([4, 1])[1]
