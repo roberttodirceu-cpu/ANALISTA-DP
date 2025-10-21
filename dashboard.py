@@ -9,6 +9,7 @@ import pickle
 
 # Importa as funções do utils.py
 try:
+    # Nota: Assumimos que 'utils.py' contém as funções importadas
     from utils import formatar_moeda, inferir_e_converter_tipos, encontrar_colunas_tipos, verificar_ausentes
 except ImportError:
     st.error("Erro: O arquivo 'utils.py' não foi encontrado. Certifique-se de que ele está no mesmo diretório.")
@@ -77,7 +78,7 @@ def limpar_filtros_salvos():
     # Limpa filtros ativos no estado da sessão
     st.session_state.active_filters_base = {}
     st.session_state.active_filters_comp = {}
-        
+    
     st.session_state['filtro_reset_trigger'] += 1
     
     # Limpa chaves de estado de widgets específicos
@@ -171,6 +172,7 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
         # 1. Filtros Categóricos
         for col in col_filtros_list:
             selecao = filtros_ativos_dict.get(col)
+            # Converte a coluna para string para garantir que a comparação funcione, especialmente para MES/ANO
             if selecao and col in df_filtrado_temp.columns and selecao != []: 
                 df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
         
@@ -224,7 +226,7 @@ def gerar_rotulo_filtro(filtros_ativos, col_data, data_range, all_options_count)
     if not rotulo_filtros:
         return "Nenhum Filtro Ativo (Total Geral)"
     
-    # Retorna o resumo, limitado a 3 ou 4 filtros para manter a concisão
+    # Retorna o resumo, limitado a 4 filtros para manter a concisão
     resumo = " | ".join(rotulo_filtros[:4])
     if len(rotulo_filtros) > 4:
         resumo += "..."
@@ -232,15 +234,112 @@ def gerar_rotulo_filtro(filtros_ativos, col_data, data_range, all_options_count)
     return resumo
 
 
+# --- NOVO: FUNÇÃO PARA ANÁLISE DINÂMICA DE VARIAÇÃO ---
+
+def analisar_variacao_dinamica(df_base, df_comp, colunas_numericas_salvas):
+    """Calcula e exibe Contagem, Soma e Média para colunas relevantes para os dois DataFrames filtrados."""
+    
+    st.subheader("📊 Análise Dinâmica de Variação (Contagem | Soma | Média)")
+    st.caption("Valores calculados sobre os DataFrames 'Base' e 'Comparação' após os filtros aplicados.")
+    st.markdown("---")
+
+    colunas_numericas_limpas = [
+        col for col in colunas_numericas_salvas 
+        # Exemplo de colunas a ignorar na soma (ajuste conforme o seu dataset)
+        if col not in ['nr func', 'eve', 'seq', 'emp'] 
+    ]
+    
+    # Colunas de interesse principal para exibição formatada
+    colunas_chave = {
+        'valor': 'VALOR (R$)',
+        'referencia': 'REFERÊNCIA',
+        'mes': 'MÊS (ID)',
+        'ano': 'ANO (ID)',
+    }
+
+    # Estrutura de exibição: 2 colunas principais (Base e Comparação)
+    cols_principal = st.columns(2)
+    
+    # --- Painel de Análise BASE ---
+    with cols_principal[0]:
+        st.markdown("<h5 style='color: #28a745;'>BASE (Referência)</h5>", unsafe_allow_html=True)
+        
+        # Cabeçalho da tabela de análise
+        cols_header = st.columns([1, 1, 1, 1])
+        cols_header[0].markdown("**MÉTRICA**")
+        cols_header[1].markdown("**CONT. ÚNICOS**")
+        cols_header[2].markdown("**SOMA**")
+        cols_header[3].markdown("**MÉDIA**")
+        st.markdown("---", anchor='base_analysis')
+        
+        for col_limpa in colunas_numericas_limpas:
+            if col_limpa not in df_base.columns: continue
+            
+            nome_display = colunas_chave.get(col_limpa, col_limpa.replace('_', ' ').title())
+            
+            # Cálculos de agregação
+            contagem_unicos = df_base[col_limpa].nunique(dropna=True)
+            soma_total = df_base[col_limpa].sum()
+            media = df_base[col_limpa].mean()
+            
+            # Exibição
+            cols = st.columns([1, 1, 1, 1])
+            cols[0].write(nome_display)
+            cols[1].write(f"{contagem_unicos:,.0f}".replace(",", ".")) 
+            
+            # Condicional para aplicar formatação de moeda
+            if col_limpa in [c.lower() for c in colunas_chave.keys() if c in ['valor']]:
+                cols[2].write(formatar_moeda(soma_total))
+                cols[3].write(formatar_moeda(media))
+            else:
+                # Formatação para referências/quantidades (2 casas decimais)
+                cols[2].write(f"{soma_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                cols[3].write(f"{media:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    # --- Painel de Análise COMPARAÇÃO ---
+    with cols_principal[1]:
+        st.markdown("<h5 style='color: #dc3545;'>COMPARAÇÃO (Alvo)</h5>", unsafe_allow_html=True)
+        
+        # Cabeçalho da tabela de análise
+        cols_header = st.columns([1, 1, 1, 1])
+        cols_header[0].markdown("**MÉTRICA**")
+        cols_header[1].markdown("**CONT. ÚNICOS**")
+        cols_header[2].markdown("**SOMA**")
+        cols_header[3].markdown("**MÉDIA**")
+        st.markdown("---", anchor='comp_analysis')
+        
+        for col_limpa in colunas_numericas_limpas:
+            if col_limpa not in df_comp.columns: continue
+            
+            nome_display = colunas_chave.get(col_limpa, col_limpa.replace('_', ' ').title())
+            
+            # Cálculos de agregação
+            contagem_unicos = df_comp[col_limpa].nunique(dropna=True)
+            soma_total = df_comp[col_limpa].sum()
+            media = df_comp[col_limpa].mean()
+            
+            # Exibição
+            cols = st.columns([1, 1, 1, 1])
+            cols[0].write(nome_display)
+            cols[1].write(f"{contagem_unicos:,.0f}".replace(",", ".")) 
+            
+            # Condicional para aplicar formatação de moeda
+            if col_limpa in [c.lower() for c in colunas_chave.keys() if c in ['valor']]:
+                cols[2].write(formatar_moeda(soma_total))
+                cols[3].write(formatar_moeda(media))
+            else:
+                # Formatação para referências/quantidades (2 casas decimais)
+                cols[2].write(f"{soma_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                cols[3].write(f"{media:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
+
+
 # --- SIDEBAR (CONFIGURAÇÕES E UPLOAD) ---
 with st.sidebar:
     st.markdown("# 📊")
     st.title("⚙️ Configurações do Expert")
     
-    # ... (Resto da lógica de upload e configuração do sidebar permanece igual) ...
-    # O código aqui é extenso, mas é o mesmo da versão anterior, garantindo o processamento.
-    # Por brevidade, vou focar apenas no dashboard principal.
-
     st.info("💡 **Carga Inicial Salva:** Os datasets processados são salvos em um arquivo de persistência (`data/data_sets_catalog.pkl`).")
 
     # Botão de Limpeza Completa
@@ -371,9 +470,15 @@ with st.sidebar:
                 # O DataFrame precisa ser processado aqui para ter os tipos corretos para a seleção de filtros
                 df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
                 
+                # CORREÇÃO PARA FILTRO MES/ANO: Força 'mes' e 'ano' a serem categóricos/string
+                if 'mes' in df_processado.columns:
+                    df_processado['mes'] = df_processado['mes'].astype(str).astype('category')
+                if 'ano' in df_processado.columns:
+                    df_processado['ano'] = df_processado['ano'].astype(str).astype('category')
+                
                 # Colunas de filtro são as categóricas (object ou category)
                 colunas_para_filtro_options = df_processado.select_dtypes(include=['object', 'category']).columns.tolist()
-                filtro_default = [c for c in colunas_para_filtro_options if c in ['tipo', 'situacao', 'empresa', 'departamento']]
+                filtro_default = [c for c in colunas_para_filtro_options if c in ['tipo', 'situacao', 'empresa', 'departamento', 'mes', 'ano']] # Incluindo mes/ano
                 if 'filtros_select' not in st.session_state:
                     initialize_widget_state('filtros_select', colunas_para_filtro_options, filtro_default)
                 
@@ -455,10 +560,10 @@ else:
              pass
 
         coluna_metrica_principal = st.selectbox("Métrica de Valor Principal para KPI e Gráficos:", 
-                                                options=colunas_valor_metricas, 
-                                                index=default_metric_index, 
-                                                key='metrica_principal_selectbox', 
-                                                help="Selecione a coluna numérica principal para o cálculo de KPIs (Total e Média) e para o Eixo Y dos gráficos.")
+                                                 options=colunas_valor_metricas, 
+                                                 index=default_metric_index, 
+                                                 key='metrica_principal_selectbox', 
+                                                 help="Selecione a coluna numérica principal para o cálculo de KPIs (Total e Média) e para o Eixo Y dos gráficos.")
     with col_reset_btn:
         st.markdown("###### ") 
         if st.button("🗑️ Resetar Filtros", help="Redefine todas as seleções de filtro para o estado inicial."):
@@ -491,12 +596,13 @@ else:
                     for col in filtros_col:
                         if col not in df_analise_base.columns: continue
                         
+                        # Garante que as opções de filtro são strings para o multiselect
                         opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('N/A').unique().tolist())
                         filtro_key = f'filtro_key_{suffix}_{col}'
                         
                         if filtro_key not in st.session_state:
                              st.session_state[filtro_key] = []
-                             
+                            
                         is_filtered = len(st.session_state.get(filtro_key, [])) > 0 and len(st.session_state.get(filtro_key, [])) < len(opcoes_unicas)
                         
                         with st.expander(f"**{col}** ({len(opcoes_unicas)} opções) {'- ATIVO' if is_filtered else ''}", expanded=is_filtered):
@@ -522,6 +628,12 @@ else:
                             
                             if selecao_form and len(selecao_form) < len(opcoes_unicas):
                                 active_filters_dict[col] = selecao_form
+                            elif selecao_form and len(selecao_form) == len(opcoes_unicas):
+                                # Se selecionou todos, trata como filtro inativo para o rótulo, mas armazena
+                                active_filters_dict[col] = selecao_form
+                            elif not selecao_form and st.session_state.get(filtro_key):
+                                # Se limpou o multiselect
+                                active_filters_dict[col] = []
 
             return active_filters_dict
 
@@ -553,14 +665,14 @@ else:
                     with col_date_base:
                         default_date_range_base = st.session_state.get(data_range_base_key, (data_min.to_pydatetime(), data_max.to_pydatetime()))
                         data_range_base = st.slider("Data BASE", min_value=data_min.to_pydatetime(), max_value=data_max.to_pydatetime(), 
-                                                  value=default_date_range_base, format="YYYY/MM/DD", key=data_range_base_key)
+                                                     value=default_date_range_base, format="YYYY/MM/DD", key=data_range_base_key)
                         if data_range_base != (data_min.to_pydatetime(), data_max.to_pydatetime()):
                              st.session_state.active_filters_base['data_range'] = data_range_base
                         
                     with col_date_comp:
                         default_date_range_comp = st.session_state.get(data_range_comp_key, (data_min.to_pydatetime(), data_max.to_pydatetime()))
                         data_range_comp = st.slider("Data COMPARAÇÃO", min_value=data_min.to_pydatetime(), max_value=data_max.to_pydatetime(), 
-                                                  value=default_date_range_comp, format="YYYY/MM/DD", key=data_range_comp_key)
+                                                     value=default_date_range_comp, format="YYYY/MM/DD", key=data_range_comp_key)
                         if data_range_comp != (data_min.to_pydatetime(), data_max.to_pydatetime()):
                             st.session_state.active_filters_comp['data_range'] = data_range_comp
                             
@@ -575,8 +687,8 @@ else:
         st.rerun() 
 
     # --- Coletar Filtros Ativos (Para a Função de Cache) ---
-    filtros_ativos_base_cache = {col: st.session_state.get(f'filtro_key_base_{col}') for col in colunas_categoricas_filtro if st.session_state.get(f'filtro_key_base_{col}')}
-    filtros_ativos_comp_cache = {col: st.session_state.get(f'filtro_key_comp_{col}') for col in colunas_categoricas_filtro if st.session_state.get(f'filtro_key_comp_{col}')}
+    filtros_ativos_base_cache = {col: st.session_state.get(f'filtro_key_base_{col}') for col in colunas_categoricas_filtro if st.session_state.get(f'filtro_key_base_{col}') is not None}
+    filtros_ativos_comp_cache = {col: st.session_state.get(f'filtro_key_comp_{col}') for col in colunas_categoricas_filtro if st.session_state.get(f'filtro_key_comp_{col}') is not None}
 
     df_analise_base_filtrado, df_analise_comp_filtrado = aplicar_filtros_comparacao(
         df_analise_base, 
@@ -611,335 +723,69 @@ else:
     df_comp = st.session_state.df_filtrado_comp
     coluna_metrica_principal = st.session_state.get('metrica_principal_selectbox')
     
-    # --- Funções de Cálculo (Mantidas da versão anterior) ---
-    def calculate_metrics(df, col_metrica):
-        if df.empty: return 0, 0, 0
-        count = len(df)
-        if col_metrica == 'Contagem de Registros':
-            total = count
-            average = 1 if count > 0 else 0 
-        elif col_metrica and col_metrica in df.columns:
-            total = df[col_metrica].sum()
-            average = df[col_metrica].mean() 
-        else:
-            return 0, 0, 0
-        return total, average, count
-
-    def format_value(value, is_currency):
-        if is_currency:
-            return formatar_moeda(value)
-        else:
-            return f"{value:,.0f}".replace(',', '.') if value is not None else "0"
-
-    def calculate_delta(base, comp, is_currency):
-        if base == 0 and comp == 0: return 0, "0.00%", "off"
-        if base == 0 and comp != 0: return comp, "N/A (Base 0)", "normal" if comp > 0 else "inverse"
-        delta_abs = comp - base
-        delta_perc = (delta_abs / base) * 100
-        delta_label = f"{delta_perc:+.2f}%"
-        delta_color = 'normal' if delta_abs >= 0 else 'inverse'
-        return delta_abs, delta_label, delta_color
-
-
-    is_currency_metric = coluna_metrica_principal != 'Contagem de Registros'
+    # CÁLCULOS E EXIBIÇÃO DOS KPIS DE VARIAÇÃO (Total e Média)
     
-    # 1. Cálculos para TOTAL
-    total_base, media_calc_base, count_base = calculate_metrics(df_base, coluna_metrica_principal)
-    total_comp, media_calc_comp, count_comp = calculate_metrics(df_comp, coluna_metrica_principal)
-    
-    delta_total_abs, delta_total_perc_label, delta_total_color = calculate_delta(total_base, total_comp, is_currency_metric)
+    # Função auxiliar para formatação de delta
+    def format_delta(value):
+        if np.isfinite(value):
+            return f"{value:,.2f} %".replace(",", "X").replace(".", ",").replace("X", ".")
+        return "+Inf %" if value == np.inf else "N/A"
 
-    # 2. Cálculos para MÉDIA
-    delta_media_abs, delta_media_perc_label, delta_media_color = calculate_delta(media_calc_base, media_calc_comp, is_currency_metric)
+    if coluna_metrica_principal != 'Contagem de Registros':
+        # Sums
+        total_base = df_base[coluna_metrica_principal].sum() if not df_base.empty else 0
+        total_comp = df_comp[coluna_metrica_principal].sum() if not df_comp.empty else 0
+        variacao_total = ((total_comp - total_base) / total_base) * 100 if total_base != 0 else (0 if total_comp == 0 else np.inf)
 
-    # 3. Cálculos para CONTAGEM
-    delta_count_abs, delta_count_perc_label, delta_count_color = calculate_delta(count_base, count_comp, is_currency=False)
+        # Means
+        media_base = df_base[coluna_metrica_principal].mean() if not df_base.empty else 0
+        media_comp = df_comp[coluna_metrica_principal].mean() if not df_comp.empty else 0
+        variacao_media = ((media_comp - media_base) / media_base) * 100 if media_base != 0 else (0 if media_comp == 0 else np.inf)
 
-
-    # --- Títulos das Colunas (Mais Compacto e Focado na Métrica) ---
-    col_title_metric, col_title_base, col_title_comp, col_title_delta = st.columns([1.5, 1.5, 1.5, 1.5])
-    col_title_metric.markdown("<h4 style='text-align: left; font-size: 1.1rem;'>Métrica</h4>", unsafe_allow_html=True)
-    col_title_base.markdown("<h4 style='text-align: right; font-size: 1.1rem;'>BASE (Referência)</h4>", unsafe_allow_html=True)
-    col_title_comp.markdown("<h4 style='text-align: right; font-size: 1.1rem;'>COMPARAÇÃO (Alvo)</h4>", unsafe_allow_html=True)
-    col_title_delta.markdown("<h4 style='text-align: right; font-size: 1.1rem;'>VARIAÇÃO (Δ)</h4>", unsafe_allow_html=True)
-    
-    st.markdown("---") 
-
-    # Função auxiliar para exibir as métricas de forma limpa
-    def display_kpi_row(label, base_val, comp_val, delta_abs, delta_perc_label, delta_color, is_currency):
-        col1, col2, col3, col4 = st.columns([1.5, 1.5, 1.5, 1.5])
-        with col1:
-            st.markdown(f"**{label}**")
-        with col2:
-            st.metric("", format_value(base_val, is_currency), help=f"Valor na BASE: {format_value(base_val, is_currency)}")
-        with col3:
-            st.metric("", format_value(comp_val, is_currency), help=f"Valor na COMPARAÇÃO: {format_value(comp_val, is_currency)}")
-        with col4:
-            st.metric("", format_value(delta_abs, is_currency), delta_perc_label, delta_color, help=f"Variação: {delta_perc_label}")
-
-    # --- Linha 1: TOTAL ---
-    display_kpi_row(
-        label=f"Total ({coluna_metrica_principal.replace('_', ' ').title()})",
-        base_val=total_base,
-        comp_val=total_comp,
-        delta_abs=delta_total_abs,
-        delta_perc_label=delta_total_perc_label,
-        delta_color=delta_total_color,
-        is_currency=is_currency_metric
-    )
-
-    st.markdown("---") 
-
-    # --- Linha 2: MÉDIA (Apenas se for métrica numérica) ---
-    if is_currency_metric:
-        display_kpi_row(
-            label=f"Média ({coluna_metrica_principal.replace('_', ' ').title()})",
-            base_val=media_calc_base,
-            comp_val=media_calc_comp,
-            delta_abs=delta_media_abs,
-            delta_perc_label=delta_media_perc_label,
-            delta_color=delta_media_color,
-            is_currency=is_currency_metric
-        )
-        st.markdown("---") 
-    
-    # --- Linha 3: CONTAGEM DE REGISTROS ---
-    display_kpi_row(
-        label="Nº de Registros (Contagem)",
-        base_val=count_base,
-        comp_val=count_comp,
-        delta_abs=delta_count_abs,
-        delta_perc_label=delta_count_perc_label,
-        delta_color=delta_count_color,
-        is_currency=False # Contagem nunca é moeda
-    )
-
-    st.markdown("---") 
-
-    # --- Análise Visual (Gráficos) ---
-    st.subheader("📈 Análise Visual (Gráficos) ")
-
-    # ... (Resto da lógica de gráficos permanece igual) ...
-    
-    # Configuração Multi-Dimensional dos Gráficos (Eixo X e Quebra/Cor)
-    col_config_x, col_config_color = st.columns(2)
-    
-    colunas_categoricas_para_grafico = ['Nenhuma (Total)'] + colunas_categoricas_filtro
-    coluna_agrupamento_principal = colunas_categoricas_filtro[0] if colunas_categoricas_filtro else 'Nenhuma (Total)'
-    
-    with col_config_x:
-        coluna_x_fixa = st.selectbox(
-            "Agrupar/Comparar por (Eixo X):", 
-            options=colunas_categoricas_para_grafico, 
-            index=colunas_categoricas_para_grafico.index(coluna_agrupamento_principal) if coluna_agrupamento_principal in colunas_categoricas_para_grafico else 0,
-            key='grafico_key_eixo_x'
-        )
-    
-    with col_config_color:
-        colunas_quebra_opcoes = ['Nenhuma'] + [c for c in colunas_categoricas_filtro if c != coluna_x_fixa and c != 'Nenhuma (Total)']
-        coluna_quebra_cor = st.selectbox(
-            "Quebrar Análise/Cor por:", 
-            options=colunas_quebra_opcoes, 
-            index=0,
-            key='grafico_key_quebra_cor',
-            help="Use para quebrar a métrica principal por uma dimensão adicional."
-        )
-
-    st.markdown("---") 
-
-    # --- GRÁFICO 1: Comparação de Valor BASE vs. COMPARAÇÃO ---
-    col_graph_1, col_graph_2 = st.columns(2)
-    
-    with col_graph_1:
-        st.markdown(f"##### Gráfico 1: Comparação BASE vs. COMPARAÇÃO por **{coluna_x_fixa.title().replace('_', ' ')}**")
+        # Display
+        col_kpi_total, col_kpi_media = st.columns(2)
         
-        opcoes_grafico_1 = ['Barra Agrupada (Comparação Total)']
-        if is_currency_metric:
-             opcoes_grafico_1.append('Barra Agrupada (Comparação Média)')
-             opcoes_grafico_1.append('Dispersão (Box Plot)')
-             
-        tipo_grafico_1 = st.selectbox("Tipo de Visualização (Gráfico 1):", options=opcoes_grafico_1, key='tipo_grafico_1')
-
-        eixo_x_real = None if coluna_x_fixa == 'Nenhuma (Total)' else coluna_x_fixa
-        color_real = None if coluna_quebra_cor == 'Nenhuma' else coluna_quebra_cor
-        
-        df_plot_base = df_base
-        df_plot_comp = df_comp
-        
-        y_col_agg = coluna_metrica_principal.replace('_', ' ').title() if coluna_metrica_principal != 'Contagem de Registros' else 'Nº de Registros'
-        
-        if not df_plot_base.empty and not df_plot_comp.empty:
-            
-            try:
-                if eixo_x_real:
-                    
-                    if tipo_grafico_1.startswith('Barra Agrupada'):
-                        agg_cols = [eixo_x_real]
-                        if color_real: agg_cols.append(color_real)
-                        
-                        is_mean_agg = 'Média' in tipo_grafico_1
-                        
-                        def agg_func(df):
-                            if coluna_metrica_principal == 'Contagem de Registros':
-                                return df.groupby(agg_cols, as_index=False).size().rename(columns={'size': y_col_agg})
-                            elif is_mean_agg:
-                                return df.groupby(agg_cols, as_index=False)[coluna_metrica_principal].mean().rename(columns={coluna_metrica_principal: y_col_agg})
-                            else:
-                                return df.groupby(agg_cols, as_index=False)[coluna_metrica_principal].sum().rename(columns={coluna_metrica_principal: y_col_agg})
-                            
-                        df_agg_base = agg_func(df_plot_base)
-                        df_agg_comp = agg_func(df_plot_comp)
-                        
-                        df_agg_base['Conjunto'] = 'BASE'
-                        df_agg_comp['Conjunto'] = 'COMPARAÇÃO'
-                        df_final = pd.concat([df_agg_base, df_agg_comp], ignore_index=True)
-
-                        fig = px.bar(df_final, x=eixo_x_real, y=y_col_agg, color='Conjunto', 
-                                     pattern_shape=color_real,
-                                     barmode='group',
-                                     title=f'{tipo_grafico_1} de {y_col_agg} por {eixo_x_real}')
-                        fig.update_layout(xaxis={'categoryorder': 'total descending'}, title_x=0.5)
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                    elif tipo_grafico_1 == 'Dispersão (Box Plot)' and is_currency_metric:
-                        df_plot_base['Conjunto'] = 'BASE'
-                        df_plot_comp['Conjunto'] = 'COMPARAÇÃO'
-                        df_dispersao = pd.concat([df_plot_base, df_plot_comp], ignore_index=True)
-                        
-                        fig = px.box(df_dispersao, x='Conjunto', y=coluna_metrica_principal, color=color_real,
-                                     title=f'Distribuição de {coluna_metrica_principal} entre Base e Comparação')
-                        fig.update_layout(title_x=0.5)
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    else:
-                        st.info("Gráfico não gerado. Verifique a seleção de Eixo X e Tipo de Gráfico.")
-                        
-                else:
-                    st.info("Selecione uma coluna para o Eixo X para gerar o Gráfico de Comparação.")
-
-            except Exception as e:
-                st.error(f"Erro ao gerar o Gráfico 1: {e}")
-        else:
-            st.warning("Um ou ambos os conjuntos de dados (Base/Comparação) estão vazios após a aplicação dos filtros.")
-            
-    # --- Gráfico 2: (Base) Série Temporal/Distribuição/Dispersão ---
-    with col_graph_2:
-        st.markdown(f"##### Gráfico 2: Foco em **{coluna_metrica_principal.replace('_', ' ').title()}** (Conjunto Base)")
-        opcoes_grafico_2 = ['Distribuição (Histograma)']
-        
-        if colunas_data:
-            opcoes_grafico_2.append('Série Temporal (Linha - Total)')
-            if is_currency_metric:
-                opcoes_grafico_2.append('Série Temporal (Linha - Média)')
-            
-        if is_currency_metric and len(colunas_numericas_salvas) > 1:
-            opcoes_grafico_2.append('Relação (Dispersão)')
-            
-        tipo_grafico_2 = st.selectbox("Tipo de Visualização (Gráfico 2):", options=opcoes_grafico_2, key='tipo_grafico_2')
-        
-        if not df_base.empty:
-            fig = None
-            try:
-                if tipo_grafico_2.startswith('Série Temporal (Linha)'):
-                    eixo_x_data = colunas_data[0]
-                    color_real = None if coluna_quebra_cor == 'Nenhuma' else coluna_quebra_cor
-                    is_mean_agg = 'Média' in tipo_grafico_2
-                    
-                    agg_cols = [eixo_x_data]
-                    if color_real: agg_cols.append(color_real)
-                    
-                    y_col_agg_title = coluna_metrica_principal.replace('_', ' ').title() if coluna_metrica_principal != 'Contagem de Registros' else 'Nº de Registros'
-                    
-                    if coluna_metrica_principal == 'Contagem de Registros':
-                         df_agg = df_base.groupby(agg_cols, as_index=False).size().rename(columns={'size': y_col_agg_title})
-                         y_col_agg = y_col_agg_title
-                    elif is_mean_agg:
-                         df_agg = df_base.groupby(agg_cols, as_index=False)[coluna_metrica_principal].mean()
-                         y_col_agg = coluna_metrica_principal
-                    else:
-                         df_agg = df_base.groupby(agg_cols, as_index=False)[coluna_metrica_principal].sum()
-                         y_col_agg = coluna_metrica_principal
-                         
-                    fig = px.line(df_agg, x=eixo_x_data, y=y_col_agg, color=color_real,
-                                  title=f'Tendência Temporal (Base): {tipo_grafico_2.split(" - ")[1]} de {y_col_agg_title}{" por " + color_real if color_real else ""}')
-                    
-                elif tipo_grafico_2 == 'Distribuição (Histograma)':
-                    if is_currency_metric:
-                        color_real = None if coluna_quebra_cor == 'Nenhuma' else coluna_quebra_cor
-                        fig = px.histogram(df_base, x=coluna_metrica_principal, color=color_real,
-                                           title=f'Distribuição (Base) de {coluna_metrica_principal}{" por " + color_real if color_real else ""}')
-                    else:
-                        st.warning("Selecione Coluna de Valor Numérica para Histograma.")
-                        
-                elif tipo_grafico_2 == 'Relação (Dispersão)' and is_currency_metric:
-                    colunas_para_dispersao = [c for c in colunas_numericas_salvas if c != coluna_metrica_principal]
-                    if colunas_para_dispersao:
-                        coluna_x_disp = st.selectbox("Selecione o Eixo X para Dispersão:", options=colunas_para_dispersao, key='col_x_disp_2')
-                        color_real = None if coluna_quebra_cor == 'Nenhuma' else coluna_quebra_cor
-                        fig = px.scatter(df_base, x=coluna_x_disp, y=coluna_metrica_principal, color=color_real,
-                                         title=f'Relação (Base) entre {coluna_x_disp} e {coluna_metrica_principal}{" por " + color_real if color_real else ""}')
-                    else:
-                         st.warning("Necessário outra coluna numérica para Gráfico de Dispersão.")
-
-                if fig:
-                    fig.update_layout(hovermode="x unified", title_x=0.5, margin=dict(t=50, b=50, l=50, r=50))
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("Gráfico não gerado. Verifique as configurações.")
-                    
-            except Exception as e:
-                st.error(f"Erro ao gerar o Gráfico 2: {e}")
-        else:
-            st.warning("O DataFrame Base está vazio após a aplicação dos filtros.")
-
-    # --- Tabela e Download ---
-    st.markdown("---")
-    st.subheader(f"🔍 Detalhes dos Dados Filtrados (Base)")
-    st.caption(f"Filtros Ativos: {rotulo_base}. Exibindo no máximo 1000 linhas.")
-    
-    df_exibicao = df_base.copy()
-    for col in colunas_numericas_salvas: 
-        if col in df_exibicao.columns:
-            if is_currency_metric and any(word in col for word in ['valor', 'salario', 'custo', 'receita']):
-                df_exibicao[col] = df_exibicao[col].apply(formatar_moeda)
-                
-    max_linhas_exibidas = 1000
-    if len(df_exibicao) > max_linhas_exibidas:
-        df_exibicao_limitado = df_exibicao.head(max_linhas_exibidas)
-    else:
-        df_exibicao_limitado = df_exibicao
-
-    st.dataframe(df_exibicao_limitado, use_container_width=True, hide_index=True)
-
-    csv_data = df_base.to_csv(index=False, sep=';', decimal=',', encoding='utf-8')
-    xlsx_output = BytesIO()
-    xlsx_data = None
-    try:
-        import openpyxl 
-        with pd.ExcelWriter(xlsx_output, engine='openpyxl') as writer:
-            df_base.to_excel(writer, index=False)
-        xlsx_data = xlsx_output.getvalue()
-    except ImportError:
-        pass 
-    except Exception as e:
-         st.error(f"Erro ao criar o arquivo XLSX: {e}")
-
-        
-    col_csv, col_xlsx, _ = st.columns([1, 1, 2])
-    with col_csv:
-        st.download_button(
-            label="📥 Baixar Dados Base (CSV)",
-            data=csv_data,
-            file_name=f'dados_base_exportados_{datetime.now().strftime("%Y%m%d_%H%M")}.csv',
-            mime='text/csv',
-            use_container_width=True
-        )
-    if xlsx_data:
-        with col_xlsx:
-            st.download_button(
-                label="📥 Baixar Dados Base (XLSX)",
-                data=xlsx_data,
-                file_name=f'dados_base_exportados_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx',
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                use_container_width=True
+        # KPI Total
+        with col_kpi_total:
+            st.metric(
+                label=f"SOMA {coluna_metrica_principal.upper()}",
+                value=formatar_moeda(total_comp),
+                delta=format_delta(variacao_total),
+                delta_color=("inverse" if variacao_total < 0 else "normal") if np.isfinite(variacao_total) else "off"
             )
+            st.caption(f"Valor BASE (Referência): {formatar_moeda(total_base)}")
+
+        # KPI Média
+        with col_kpi_media:
+            st.metric(
+                label=f"MÉDIA {coluna_metrica_principal.upper()}",
+                value=formatar_moeda(media_comp),
+                delta=format_delta(variacao_media),
+                delta_color=("inverse" if variacao_media < 0 else "normal") if np.isfinite(variacao_media) else "off"
+            )
+            st.caption(f"Valor BASE (Referência): {formatar_moeda(media_base)}")
+    else:
+        # KPI Contagem de Registros
+        cont_base = len(df_base)
+        cont_comp = len(df_comp)
+        variacao_cont = ((cont_comp - cont_base) / cont_base) * 100 if cont_base != 0 else (0 if cont_comp == 0 else np.inf)
+        
+        col_kpi_cont, _ = st.columns(2)
+        with col_kpi_cont:
+            st.metric(
+                label="CONTAGEM DE REGISTROS",
+                value=f"{cont_comp:,.0f}".replace(",", "."),
+                delta=format_delta(variacao_cont),
+                delta_color=("inverse" if variacao_cont < 0 else "normal") if np.isfinite(variacao_cont) else "off"
+            )
+            st.caption(f"Valor BASE (Referência): {cont_base:,.0f}".replace(",", "."))
+    
+    st.markdown("---")
+    
+    # CHAMADA DA FUNÇÃO DE ANÁLISE DINÂMICA
+    analisar_variacao_dinamica(df_base, df_comp, colunas_numericas_salvas)
+
+
+    # --- Visualização do DataFrame (Detalhe) ---
+    st.subheader("📚 Detalhe dos Dados Filtrados (Base)")
+    st.dataframe(df_base)
