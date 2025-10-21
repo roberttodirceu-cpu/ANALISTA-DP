@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Limpeza Agressiva de Colunas
+# app.py - Versão FINAL com Limpeza Agressiva de Colunas e Correção de Mês/Ano para Filtros Categóricos
 
 import streamlit as st
 import pandas as pd
@@ -176,7 +176,7 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
             if selecao and len(selecao) > 0 and len(selecao) < len(opcoes_unicas): 
                 df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
         
-        # 2. Filtro de Data
+        # 2. Filtro de Data (SÓ É APLICADO SE HOUVER COLUNA DE DATA E DATA_RANGE)
         if data_range and len(data_range) == 2 and col_data and col_data[0] in df_filtrado_temp.columns:
             col_data_padrao = col_data[0]
             df_filtrado_temp[col_data_padrao] = pd.to_datetime(df_filtrado_temp[col_data_padrao], errors='coerce')
@@ -483,9 +483,11 @@ with st.sidebar:
                     uploaded_file_stream = BytesIO(file_bytes)
                     if file_name.endswith('.csv'):
                         try:
+                            # Tenta ler com separador ';', decimal ','
                             df_temp = pd.read_csv(uploaded_file_stream, sep=';', decimal=',', encoding='utf-8')
                         except Exception:
                             uploaded_file_stream.seek(0)
+                            # Tenta ler com separador ',', decimal '.'
                             df_temp = pd.read_csv(uploaded_file_stream, sep=',', decimal='.', encoding='utf-8')
                     elif file_name.endswith('.xlsx'):
                         df_temp = pd.read_excel(uploaded_file_stream)
@@ -505,7 +507,7 @@ with st.sidebar:
                 st.session_state.dados_atuais = pd.DataFrame() 
             else:
                 
-                # --- CORREÇÃO DE LIMPEZA MAIS ROBUSTA (AQUI ESTÁ A CHAVE) ---
+                # --- CORREÇÃO DE LIMPEZA MAIS ROBUSTA (Padronização de Colunas) ---
                 raw_columns = df_novo.columns.copy()
                 
                 # Limpeza agressiva: strip, lower, remover acentos e substituir tudo que não é letra/número por underscore
@@ -515,8 +517,8 @@ with st.sidebar:
                     .str.lower()
                     .str.normalize('NFKD')
                     .str.encode('ascii', 'ignore').str.decode('utf-8')
-                    .str.replace(r'[^a-z0-9]+', '_', regex=True) # Substitui sequências de caracteres estranhos por um único underscore
-                    .str.strip('_') # Remove underscore inicial/final
+                    .str.replace(r'[^a-z0-9]+', '_', regex=True) 
+                    .str.strip('_') 
                 )
                 df_novo.columns = cleaned_columns
                 colunas_disponiveis = df_novo.columns.tolist()
@@ -525,15 +527,13 @@ with st.sidebar:
                 target_col = 'nome_funcionario'
                 
                 if target_col not in colunas_disponiveis:
-                    # Se a limpeza agressiva não funcionou, procuramos pela coluna original ('NOME FUNCIONARIO')
-                    # antes da limpeza, ou por qualquer coluna que contenha 'nome' e 'func'
                     employee_col_candidates = [col for col in colunas_disponiveis if 'nome' in col and 'func' in col]
 
                     if employee_col_candidates:
                         original_candidate = employee_col_candidates[0]
                         df_novo.rename(columns={original_candidate: target_col}, inplace=True)
                         st.sidebar.info(f"Col. de Funcionário renomeada: '{original_candidate}' -> '{target_col}'")
-                        colunas_disponiveis = df_novo.columns.tolist() # Atualiza a lista de colunas
+                        colunas_disponiveis = df_novo.columns.tolist() 
                     else:
                         st.sidebar.warning("Aviso: Não foi possível identificar a coluna de nome de funcionário automaticamente.")
                         
@@ -544,17 +544,23 @@ with st.sidebar:
                 moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
                 if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', moeda_default)
                 
-                # Garante que 'nome_funcionario' está na lista de texto para ser processada corretamente
-                texto_default = [col for col in colunas_disponiveis if col in ['nr_func', 'nome_funcionario', 'emp', 'eve', 'seq', 't', 'tip', 'descricao_evento', 'tipo_processo']]
                 
+                # --- DEFINIÇÃO DE COLUNAS TEXTO (INCLUINDO MÊS E ANO) ---
+                texto_default_base = ['nr_func', 'nome_funcionario', 'emp', 'eve', 'seq', 't', 'tip', 'descricao_evento', 'tipo_processo']
+                
+                if 'mes' in colunas_disponiveis: texto_default_base.append('mes')
+                if 'ano' in colunas_disponiveis: texto_default_base.append('ano')
+                
+                texto_default = [col for col in colunas_disponiveis if col in texto_default_base]
+
                 if 'texto_select' not in st.session_state: 
                     initialize_widget_state('texto_select', texto_default)
                 else:
-                    if 'nome_funcionario' in colunas_disponiveis:
-                         current_list = st.session_state.texto_select
-                         if 'nome_funcionario' not in current_list:
-                            current_list.append('nome_funcionario')
-                         st.session_state.texto_select = list(set(current_list)) 
+                    current_list = st.session_state.texto_select
+                    for col in texto_default:
+                        if col in colunas_disponiveis and col not in current_list:
+                             current_list.append(col)
+                    st.session_state.texto_select = list(set(current_list)) 
 
                 
                 st.markdown("##### 💰 Colunas de VALOR (R$)")
@@ -565,10 +571,18 @@ with st.sidebar:
                 colunas_texto = st.multiselect("Selecione:", options=colunas_disponiveis, default=st.session_state.texto_select, key='texto_select', label_visibility="collapsed")
                 st.markdown("---")
                 
+                # O df_processado agora terá mes e ano como Object/Category
                 df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
                 
                 colunas_para_filtro_options = df_processado.select_dtypes(include=['object', 'category']).columns.tolist()
-                filtro_default = [c for c in colunas_para_filtro_options if c in ['t', 'descricao_evento', 'nome_funcionario', 'emp', 'mes', 'ano', 'tipo_processo']] 
+                
+                # --- DEFINIÇÃO DE FILTROS PADRÃO (INCLUINDO MÊS E ANO) ---
+                filtro_default_base = ['t', 'descricao_evento', 'nome_funcionario', 'emp', 'tipo_processo']
+                if 'mes' in colunas_para_filtro_options: filtro_default_base.append('mes')
+                if 'ano' in colunas_para_filtro_options: filtro_default_base.append('ano')
+                
+                filtro_default = [c for c in colunas_para_filtro_options if c in filtro_default_base]
+                
                 if 'filtros_select' not in st.session_state:
                     initialize_widget_state('filtros_select', filtro_default)
                 
@@ -628,6 +642,8 @@ else:
         
         with tab_container:
             
+            # FILTRO DE DATA (APENAS SE HOUVER COLUNA DE DATA DE VERDADE)
+            col_data_padrao = None
             if colunas_data:
                 col_data_padrao = colunas_data[0]
                 df_col_data = df_analise_base[col_data_padrao].dropna()
@@ -663,7 +679,7 @@ else:
             cols_container = st.columns(3) 
             
             colunas_ordenadas = []
-            priority_cols = ['emp', 'tipo_processo', 't'] 
+            priority_cols = ['emp', 'tipo_processo', 't', 'ano', 'mes'] # Adicionado 'ano' e 'mes'
             employee_col = 'nome_funcionario' 
             
             for col in colunas_filtro_a_exibir:
@@ -701,6 +717,11 @@ else:
                         with col_sel_btn: st.button("✅ Selecionar Tudo", on_click=lambda c=col, s=suffix, ops=opcoes_unicas_temp: set_multiselect_all(c, s, ops), key=f'select_all_btn_{suffix}_{col}', use_container_width=True)
                         with col_clr_btn: st.button("🗑️ Limpar (Nenhum)", on_click=lambda c=col, s=suffix: set_multiselect_none(c, s), key=f'select_none_btn_{suffix}_{col}', use_container_width=True)
                         st.markdown("---") 
+                        
+                        # Garante que os meses e anos sejam exibidos na ordem correta se forem numéricos
+                        if col in ['mes', 'ano'] and all(item.isdigit() or item == 'N/A' for item in opcoes_unicas_temp):
+                            # Ordena numericamente, colocando 'N/A' por último
+                            opcoes_unicas_temp.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
                         
                         selecao_form = st.multiselect("Selecione:", options=opcoes_unicas_temp, default=safe_default, key=filtro_key, label_visibility="collapsed")
                         current_active_filters_dict[col] = selecao_form
