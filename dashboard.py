@@ -2,7 +2,7 @@
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px # Mantido, caso queira adicionar gráficos no futuro
+import plotly.express as px
 import os
 import numpy as np
 from datetime import datetime
@@ -67,20 +67,29 @@ def limpar_filtros_salvos():
     ]
     for key in chaves_a_limpar:
         try:
-            del st.session_state[key]
+            # Não limpa a chave, mas zera o valor para forçar o multiselect a resetar.
+            # Isso é mais robusto que deletar a chave.
+            if key.startswith('filtro_key_'):
+                 st.session_state[key] = []
+            elif key.startswith('date_range_key_'):
+                 # O range será redefinido pelo código, mas limpamos o estado se necessário.
+                 del st.session_state[key]
         except:
             pass
+            
     st.rerun() 
 
 def set_multiselect_all(key, suffix, options_list):
     """Callback para o botão 'Selecionar Tudo'."""
     st.session_state[f'filtro_key_{suffix}_{key}'] = options_list
-    st.rerun() 
+    # Não usamos rerun aqui, pois o clique do botão já dispara o rerun
+    # A exceção é se você usar o rerun fora da função, o que não é o caso
+    
 
 def set_multiselect_none(key, suffix):
     """Callback para o botão 'Limpar'."""
     st.session_state[f'filtro_key_{suffix}_{key}'] = []
-    st.rerun()
+    # Não usamos rerun aqui
     
 def switch_dataset(dataset_name):
     """Troca o dataset ativo no dashboard."""
@@ -240,7 +249,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     # Padronização de Colunas, conforme inferência do util.py e padrão do arquivo (FOLHA.csv)
     col_tipo_evento = 't' 
     col_valor = 'valor' 
-    col_func = 'nome_funcionario' 
+    col_func = 'nome_funcionario' # Chave para Funcionário Único
     
     if col_tipo_evento not in df_completo.columns or col_valor not in df_completo.columns:
         st.error(f"Erro de Análise: Colunas '{col_tipo_evento}' ou '{col_valor}' não encontradas no DataFrame. Verifique a configuração de colunas.")
@@ -256,7 +265,6 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         vencimentos = df_clean[df_clean[col_tipo_evento] == 'C'][col_valor].sum()
         
         # Descontos (T='D' - Débito)
-        # O valor é positivo na coluna VALOR, por isso somamos aqui
         descontos = df_clean[df_clean[col_tipo_evento] == 'D'][col_valor].sum()
         
         # Líquido (Vencimentos - Descontos)
@@ -266,15 +274,16 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
 
     # Base
     venc_base, desc_base, liq_base = calcular_venc_desc(df_base)
-    func_base = df_base[col_func].nunique() if col_func in df_base.columns else 0
+    # CRÍTICO: Contagem de Funcionários Únicos
+    func_base = df_base[col_func].nunique() if col_func in df_base.columns and not df_base.empty else 0
     
     # Comparação
     venc_comp, desc_comp, liq_comp = calcular_venc_desc(df_comp)
-    func_comp = df_comp[col_func].nunique() if col_func in df_comp.columns else 0
+    func_comp = df_comp[col_func].nunique() if col_func in df_comp.columns and not df_comp.empty else 0
     
     # Total Geral
     venc_total, desc_total, liq_total = calcular_venc_desc(df_completo)
-    func_total = df_completo[col_func].nunique() if col_func in df_completo.columns else 0
+    func_total = df_completo[col_func].nunique() if col_func in df_completo.columns and not df_completo.empty else 0
 
 
     # -------------------------------------------------------------
@@ -540,7 +549,8 @@ with st.sidebar:
                 df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
                 
                 colunas_para_filtro_options = df_processado.select_dtypes(include=['object', 'category']).columns.tolist()
-                filtro_default = [c for c in colunas_para_filtro_options if c in ['tipo', 'descricao_evento', 'nome_funcionario', 'emp', 'mes', 'ano', 'tipo_processo']] 
+                # Ajuste o filtro_default para garantir que NOME_FUNCIONARIO e EMP estejam lá
+                filtro_default = [c for c in colunas_para_filtro_options if c in ['t', 'descricao_evento', 'nome_funcionario', 'emp', 'mes', 'ano', 'tipo_processo']] 
                 if 'filtros_select' not in st.session_state:
                     initialize_widget_state('filtros_select', filtro_default)
                 
@@ -610,7 +620,6 @@ else:
                 df_col_data = df_analise_base[col_data_padrao].dropna()
                 
                 if not df_col_data.empty:
-                    # Garante que a coluna de data seja datetime
                     data_series = pd.to_datetime(df_col_data, errors='coerce').dropna()
                     
                     if not data_series.empty:
@@ -623,15 +632,12 @@ else:
                             if data_range_key not in st.session_state: 
                                 st.session_state[data_range_key] = initial_default_range
                             
-                            # Ajusta o valor padrão se o DF já foi filtrado antes e salvo no estado
                             current_value = st.session_state[data_range_key]
                             
                             data_range = st.slider(f"Data - {suffix.upper()}: {col_data_padrao.replace('_', ' ').title()}", 
                                                     min_value=data_min_df.to_pydatetime(), max_value=data_max_df.to_pydatetime(), 
                                                     value=current_value, format="YYYY/MM/DD", key=data_range_key)
                             
-                            # Aplica o filtro de data no DF temporário IMEDIATAMENTE (primeiro nível de cascata)
-                            # Se o range selecionado for diferente do range original do DF
                             if data_range[0] > data_min_df.to_pydatetime() or data_range[1] < data_max_df.to_pydatetime():
                                 df_base_temp[col_data_padrao] = pd.to_datetime(df_base_temp[col_data_padrao], errors='coerce')
                                 df_base_temp = df_base_temp[
@@ -645,10 +651,10 @@ else:
             st.markdown("##### Filtros Categóricos")
             cols_container = st.columns(3) 
             
-            # CRÍTICO: Define a ordem de prioridade para a cascata
+            # CRÍTICO: Define a ordem de prioridade para a cascata (Empresa primeiro)
             colunas_ordenadas = []
-            priority_cols = ['emp', 'tipo_processo'] # Filtros que devem restringir os demais
-            employee_col = 'nome_funcionario' # Filtro que deve ser o mais restrito
+            priority_cols = ['emp', 'tipo_processo', 't'] 
+            employee_col = 'nome_funcionario' 
             
             for col in colunas_filtro_a_exibir:
                 if col in priority_cols: colunas_ordenadas.append(col)
@@ -656,7 +662,6 @@ else:
             for col in colunas_filtro_a_exibir:
                 if col not in priority_cols and col != employee_col: colunas_ordenadas.append(col)
             
-            # Remove duplicatas, mantendo a ordem
             colunas_ordenadas = list(dict.fromkeys(colunas_ordenadas)) 
 
             
@@ -666,18 +671,23 @@ else:
                 with cols_container[i % 3]:
                     filtro_key = f'filtro_key_{suffix}_{col}'
                     
-                    # GERA AS OPÇÕES A PARTIR DO DF TEMPORÁRIO (JÁ FILTRADO PELOS ANTERIORES)
-                    # Isso garante que o multiselect de funcionários só mostre os da EMPRESA selecionada
+                    # GERA AS OPÇÕES A PARTIR DO DF TEMPORÁRIO (FILTRO CASCATA)
                     opcoes_unicas_temp = sorted(df_base_temp[col].astype(str).fillna('N/A').unique().tolist())
                     
                     if filtro_key not in st.session_state:
                          st.session_state[filtro_key] = [] 
                     
-                    # Garante que o default não contém opções que sumiram devido ao filtro cascata
-                    current_default = [opt for opt in st.session_state.get(filtro_key, []) if opt in opcoes_unicas_temp]
+                    # **[CORREÇÃO CRÍTICA APLICADA AQUI]**
+                    # Limpa o default se a opção selecionada não estiver mais disponível
+                    current_default = st.session_state.get(filtro_key, [])
                     
-                    is_filtered = len(current_default) > 0
-                    is_all_selected = len(current_default) == len(opcoes_unicas_temp)
+                    # Garante que o default contém APENAS opções que existem nas opções filtradas (opcoes_unicas_temp)
+                    # Isso é o que resolve o problema de funcionários zerados/desaparecendo
+                    safe_default = [opt for opt in current_default if opt in opcoes_unicas_temp]
+                    st.session_state[filtro_key] = safe_default # Atualiza o estado da sessão com o valor seguro
+
+                    is_filtered = len(safe_default) > 0
+                    is_all_selected = len(safe_default) == len(opcoes_unicas_temp)
                     
                     label_status = "- ATIVO" if is_filtered and not is_all_selected else ("- INATIVO" if not is_filtered else "- TOTAL")
 
@@ -687,11 +697,12 @@ else:
                         with col_clr_btn: st.button("🗑️ Limpar (Nenhum)", on_click=lambda c=col, s=suffix: set_multiselect_none(c, s), key=f'select_none_btn_{suffix}_{col}', use_container_width=True)
                         st.markdown("---") 
                         
-                        # Renderiza o multiselect com as opções limitadas
-                        selecao_form = st.multiselect("Selecione:", options=opcoes_unicas_temp, default=current_default, key=filtro_key, label_visibility="collapsed")
+                        # Renderiza o multiselect com o default seguro
+                        selecao_form = st.multiselect("Selecione:", options=opcoes_unicas_temp, default=safe_default, key=filtro_key, label_visibility="collapsed")
                         current_active_filters_dict[col] = selecao_form
                     
                     # APLICAÇÃO DO FILTRO NO DF TEMPORÁRIO PARA CASCATA NO PRÓXIMO WIDGET
+                    # O filtro é aplicado se estiver ATIVO (não vazio E não for todas as opções)
                     if selecao_form and len(selecao_form) > 0 and len(selecao_form) < len(opcoes_unicas_temp):
                         df_base_temp = df_base_temp[df_base_temp[col].astype(str).isin(selecao_form)]
             
