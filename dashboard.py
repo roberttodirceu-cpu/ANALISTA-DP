@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Opção de Agregação Explícita, Concateção e Corrigido Erro de Leitura (v3.0 - skiprows)
+# app.py - Versão FINAL com Correção de TypeError na Coluna 'valor' (v4.0)
 
 import streamlit as st
 import pandas as pd
@@ -58,6 +58,7 @@ def inferir_e_converter_tipos(df, cols_texto, cols_valor):
                 
                 # Coerce to numeric (erros se tornam NaN)
                 df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+                df_clean[col].fillna(0, inplace=True) # Preenche NaN após coerção com 0
             except:
                 st.warning(f"Aviso: Falha ao converter a coluna '{col}' para numérica.")
                 
@@ -266,6 +267,41 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
 
 # --- FUNÇÃO PARA TABELA DE RESUMO E MÉTRICAS "EXPERT" ---
 
+def calcular_venc_desc(df):
+    col_tipo_evento = 't' 
+    col_valor = 'valor' 
+    col_func = 'nome_funcionario' # Chave para Funcionário Único
+
+    if df.empty or col_valor not in df.columns or col_tipo_evento not in df.columns:
+        return 0, 0, 0, 0
+        
+    df_clean = df.copy()
+
+    # <--- CORREÇÃO CRÍTICA DO TypeError: Garantir que a coluna 'valor' é numérica --->
+    # Força a coluna 'valor' a ser numérica, transformando valores inválidos (strings, etc.) em NaN, 
+    # e depois preenche NaN com 0 para que a soma funcione corretamente.
+    try:
+        # Usa .fillna(0) para garantir que não haja NaN após a conversão
+        df_clean[col_valor] = pd.to_numeric(df_clean[col_valor], errors='coerce').fillna(0)
+    except Exception as e:
+        # Se falhar, retorna 0 para evitar quebra total do app
+        st.warning(f"Falha crítica ao forçar coluna 'valor' para numérico na análise: {e}")
+        return 0, 0, 0, 0
+    # <--- FIM DA CORREÇÃO CRÍTICA --->
+
+    df_clean = df_clean.dropna(subset=[col_valor, col_tipo_evento])
+
+    vencimentos = df_clean[df_clean[col_tipo_evento] == 'C'][col_valor].sum()
+    descontos = df_clean[df_clean[col_tipo_evento] == 'D'][col_valor].sum()
+    
+    # Esta subtração agora é segura, pois vencimentos e descontos são resultados de .sum() em uma coluna float.
+    liquido = vencimentos - descontos 
+    
+    # Lógica de contagem de Funcionários Únicos
+    func_count = df_clean[col_func].astype(str).str.strip().replace('', np.nan).dropna().nunique()
+
+    return vencimentos, descontos, liquido, func_count
+
 def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, filtros_ativos_comp, colunas_data, data_range_base, data_range_comp):
     
     colunas_valor_salvas = st.session_state.colunas_valor_salvas
@@ -294,34 +330,12 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     # 2. CALCULO DE VENCIMENTOS E DESCONTOS E FUNCIONÁRIOS ÚNICOS
     # -------------------------------------------------------------
     
-    col_tipo_evento = 't' 
-    col_valor = 'valor' 
     col_func = 'nome_funcionario' # Chave para Funcionário Único
     
-    # VERIFICAÇÃO CRÍTICA DE COLUNAS
-    if col_tipo_evento not in df_completo.columns or col_valor not in df_completo.columns:
-        st.error(f"Erro de Análise: Colunas '{col_tipo_evento}' ou '{col_valor}' não encontradas no DataFrame. Verifique a configuração de colunas.")
-        return
-        
     # VERIFICAÇÃO DE FUNCIONÁRIOS ÚNICOS
     if col_func not in df_completo.columns:
         st.error(f"Erro Crítico: A coluna '{col_func}' não foi encontrada no DataFrame. O pré-processamento de nomes de coluna falhou. Limpe o cache e tente novamente. Colunas atuais: {df_completo.columns.tolist()}")
         return
-
-    def calcular_venc_desc(df):
-        if df.empty:
-            return 0, 0, 0, 0
-            
-        df_clean = df.dropna(subset=[col_valor, col_tipo_evento])
-
-        vencimentos = df_clean[df_clean[col_tipo_evento] == 'C'][col_valor].sum()
-        descontos = df_clean[df_clean[col_tipo_evento] == 'D'][col_valor].sum()
-        liquido = vencimentos - descontos
-        
-        # Lógica de contagem de Funcionários Únicos (tratando vazios)
-        func_count = df[col_func].astype(str).str.strip().replace('', np.nan).dropna().nunique()
-
-        return vencimentos, descontos, liquido, func_count
 
     # Base
     venc_base, desc_base, liq_base, func_base = calcular_venc_desc(df_base)
