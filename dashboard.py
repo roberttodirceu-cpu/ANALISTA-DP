@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Correção de TypeError na Coluna 'valor' (v4.0)
+# app.py - Versão FINAL com Correção da Lógica da Sidebar (v4.1)
 
 import streamlit as st
 import pandas as pd
@@ -102,7 +102,8 @@ def verificar_ausentes(df): return {} # Simplificação para o app.py
 
 # --- Configuração da Página e Persistência ---
 st.set_page_config(layout="wide", page_title="Sistema de Análise de Indicadores Expert")
-PERSISTENCE_PATH = 'data/data_sets_catalog.pkl'
+# Nota: O caminho de persistência deve ser alterado se você não estiver usando o ambiente padrão do Streamlit
+PERSISTENCE_PATH = 'data/data_sets_catalog.pkl' 
 
 # ==============================================================================
 # FUNÇÕES DE GERENCIAMENTO DE ESTADO E PERSISTÊNCIA
@@ -119,19 +120,22 @@ def load_catalog():
 
 def save_catalog(catalog):
     try:
-        os.makedirs(os.path.dirname(PERSISTENCE_PATH), exist_ok=True)
+        # Garante que o diretório exista
+        os.makedirs(os.path.dirname(PERSISTENCE_PATH), exist_ok=True) 
         with open(PERSISTENCE_PATH, 'wb') as f:
             pickle.dump(catalog, f)
     except Exception as e:
-        st.sidebar.error(f"Erro ao salvar dados: {e}")
+        st.sidebar.error(f"Erro ao salvar dados de persistência: {e}")
 
 def limpar_filtros_salvos():
     """Limpa o estado de todos os filtros, forçando os widgets a resetarem ao default."""
     st.session_state.active_filters_base = {}
     st.session_state.active_filters_comp = {}
     
+    # Incrementa o trigger para forçar a reexecução e recálculo dos filtros cacheados
     st.session_state['filtro_reset_trigger'] += 1
     
+    # Limpa as chaves de sessão para os widgets de filtro e data
     chaves_a_limpar = [
         key for key in st.session_state.keys() 
         if key.startswith('filtro_key_base_') or key.startswith('date_range_key_base_') or 
@@ -139,11 +143,7 @@ def limpar_filtros_salvos():
     ]
     for key in chaves_a_limpar:
         try:
-            if key.startswith('filtro_key_'):
-                 st.session_state[key] = []
-            elif key.startswith('date_range_key_'):
-                 # Garante que os estados do slider de data são removidos
-                 del st.session_state[key]
+            del st.session_state[key]
         except:
             pass
             
@@ -278,10 +278,9 @@ def calcular_venc_desc(df):
     df_clean = df.copy()
 
     # <--- CORREÇÃO CRÍTICA DO TypeError: Garantir que a coluna 'valor' é numérica --->
-    # Força a coluna 'valor' a ser numérica, transformando valores inválidos (strings, etc.) em NaN, 
-    # e depois preenche NaN com 0 para que a soma funcione corretamente.
     try:
-        # Usa .fillna(0) para garantir que não haja NaN após a conversão
+        # Força a coluna 'valor' a ser numérica, transformando valores inválidos (strings, etc.) em NaN, 
+        # e depois preenche NaN com 0 para que a soma funcione corretamente.
         df_clean[col_valor] = pd.to_numeric(df_clean[col_valor], errors='coerce').fillna(0)
     except Exception as e:
         # Se falhar, retorna 0 para evitar quebra total do app
@@ -489,6 +488,7 @@ with st.sidebar:
             except Exception as e:
                 st.sidebar.error(f"Erro ao remover arquivo de persistência: {e}")
         
+        # Limpa todas as chaves de sessão para um estado inicial limpo
         keys_to_clear = [k for k in st.session_state.keys() if not k.startswith('_')]
         for key in keys_to_clear:
             if key not in ['data_sets_catalog', 'dados_atuais']:
@@ -499,6 +499,7 @@ with st.sidebar:
         st.info("Estado da sessão limpo! Recarregando...")
         st.rerun()
 
+    # Seção 1: Trocar Dataset Ativo (Aparece SOMENTE se houver dados salvos)
     if st.session_state.data_sets_catalog:
         st.header("1. Trocar Dataset Ativo")
         dataset_names = list(st.session_state.data_sets_catalog.keys())
@@ -518,6 +519,10 @@ with st.sidebar:
     # Seção 2: Upload e Processamento
     st.header("2. Upload e Processamento")
     
+    # Input para nome do Dataset, mantido em session_state para persistir durante o upload
+    if 'current_dataset_name_input' not in st.session_state:
+        st.session_state.current_dataset_name_input = f"Dataset Processado ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        
     with st.form("file_upload_form", clear_on_submit=True):
         uploaded_files_new = st.file_uploader(
             "📥 Carregar Novo(s) CSV/XLSX", 
@@ -526,44 +531,59 @@ with st.sidebar:
             key="file_uploader_widget"
         )
         
-        default_dataset_name = f"Dataset Processado ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
-        dataset_name_input = st.text_input("Nome para o Dataset Processado:", value=default_dataset_name)
-        
+        dataset_name_input = st.text_input("Nome para o Novo Dataset (Ou o nome do que será somado):", 
+                                           value=st.session_state.current_dataset_name_input)
+        st.session_state.current_dataset_name_input = dataset_name_input # Atualiza o estado
+
         submit_upload = st.form_submit_button("Adicionar Arquivo(s) à Lista")
         
         if submit_upload and uploaded_files_new:
             newly_added = []
             for file in uploaded_files_new:
+                # Adiciona os arquivos à lista de pendentes para processamento
                 st.session_state.uploaded_files_data[file.name] = file.read()
                 newly_added.append(file.name)
             st.success(f"Arquivos adicionados: {', '.join(newly_added)}. Clique em 'Processar' abaixo.")
+            
+            # CRÍTICO: Força a exibição da seção de reconfiguração
             st.session_state.show_reconfig_section = True 
-            st.session_state.current_dataset_name_input = dataset_name_input
             st.rerun()
 
-    if st.session_state.uploaded_files_data:
-        st.markdown("---")
-        st.markdown("##### Arquivos Pendentes para Processamento:")
-        st.button("🔁 Reconfigurar e Processar", 
-                  on_click=show_reconfig_panel,
-                  key='reconfig_btn_sidebar',
-                  use_container_width=True,
-                  type='primary')
-        st.markdown("---")
+    
+    # CRÍTICO: Esta seção agora é exibida se houver arquivos pendentes OU se o estado show_reconfig_section for True
+    if st.session_state.uploaded_files_data or st.session_state.show_reconfig_section:
         
+        # O botão de reconfiguração aparece se tivermos arquivos pendentes (uploaded_files_data)
+        if st.session_state.uploaded_files_data:
+            st.markdown("---")
+            st.markdown("##### 📝 Arquivos Pendentes:")
+            for file_name in st.session_state.uploaded_files_data.keys():
+                st.markdown(f"- **{file_name}**")
+            
+            # Botão para forçar a reabertura do painel, caso tenha sido fechado
+            st.button("🔁 Iniciar Configuração e Processamento", 
+                      on_click=show_reconfig_panel,
+                      key='reconfig_btn_sidebar',
+                      use_container_width=True,
+                      type='primary')
+            st.markdown("---")
+        
+        # Este é o painel de configuração que aparece APÓS o clique no botão acima ou após um upload
         if st.session_state.show_reconfig_section:
+            
+            # Se não houver dados, mas show_reconfig_section for True (erro de estado), forçamos o DF a ser criado
             df_novo = pd.DataFrame()
             all_dataframes = []
             
             # --- LÓGICA DE CARREGAMENTO PARA CONCATENAÇÃO (SOMA DE DADOS) ---
             df_atual_base = pd.DataFrame()
-            dataset_name_to_use = st.session_state.get('current_dataset_name_input', default_dataset_name)
+            dataset_name_to_use = st.session_state.get('current_dataset_name_input', f"Dataset Processado ({datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
             # --- NOVO SELETOR PARA CONCATENAÇÃO ---
             st.markdown("##### ➕ Opção de Soma/Agregação")
             
-            # Lista de datasets disponíveis, incluindo uma opção para não somar (Novo Dataset)
-            catalog_names = ["Novo Dataset (Substituir/Criar)"] + list(st.session_state.data_sets_catalog.keys())
+            # Lista de datasets disponíveis
+            catalog_names = ["Criar Novo Dataset (Substituir/Criar)"] + list(st.session_state.data_sets_catalog.keys())
             
             selected_dataset_to_sum = st.selectbox(
                 "Somar arquivos carregados com qual Dataset existente?",
@@ -572,132 +592,117 @@ with st.sidebar:
                 key='dataset_to_sum_selector'
             )
             
-            # O nome do dataset final (para salvar) agora depende da opção de soma
-            if selected_dataset_to_sum != "Novo Dataset (Substituir/Criar)":
+            # Lógica para definir o nome final do dataset
+            if selected_dataset_to_sum != "Criar Novo Dataset (Substituir/Criar)":
                 dataset_name_to_use = selected_dataset_to_sum
-                # Garante que o nome do input seja o nome do dataset que será atualizado
                 st.session_state.current_dataset_name_input = dataset_name_to_use 
                 st.info(f"Os novos dados serão SOMADOS ao dataset **{dataset_name_to_use}**.")
             else:
-                # Se for novo, usa o nome digitado anteriormente (dataset_name_input)
-                dataset_name_to_use = st.session_state.get('current_dataset_name_input', default_dataset_name)
-
+                dataset_name_to_use = st.session_state.get('current_dataset_name_input')
 
             # 1. Tenta carregar o dataset ATIVO ESCOLHIDO para soma
-            if selected_dataset_to_sum != "Novo Dataset (Substituir/Criar)":
-                st.sidebar.info(f"Carregando dados existentes de: '{dataset_name_to_use}'...")
+            if selected_dataset_to_sum != "Criar Novo Dataset (Substituir/Criar)":
                 if dataset_name_to_use in st.session_state.data_sets_catalog:
                     df_atual_base = st.session_state.data_sets_catalog[dataset_name_to_use]['df'].copy()
-                    st.sidebar.info(f"Dados existentes carregados: {len(df_atual_base)} linhas.")
-
-
+                    
             # 2. Processa o(s) novo(s) arquivo(s)
-            for file_name, file_bytes in st.session_state.uploaded_files_data.items():
-                df_temp = None 
+            if not st.session_state.uploaded_files_data:
+                # Se o painel está aberto, mas não há dados pendentes, é um erro de estado ou uma reconfiguração da base atual
+                st.warning("Nenhum novo arquivo detectado para processamento.")
                 
-                try:
-                    uploaded_file_stream = BytesIO(file_bytes)
+            else:
+                for file_name, file_bytes in st.session_state.uploaded_files_data.items():
+                    df_temp = None 
                     
-                    if file_name.endswith('.csv'):
-                        # Tentativas de leitura de CSV (10 combinações - A CRÍTICA AGORA USA skiprows=1)
-                        reading_attempts = [
-                            {'sep': ';', 'decimal': ',', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'},
-                            # Opções de skip row 1 para contornar lixo invisível, header=None para não procurar cabeçalho na linha 0
-                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': None, 'skiprows': 1},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': None, 'skiprows': 1},
-                            
-                            # Outras combinações normais (header='infer')
-                            {'sep': ';', 'decimal': ',', 'encoding': 'latin-1', 'skipinitialspace': True, 'header': 'infer'},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'latin-1', 'skipinitialspace': True, 'header': 'infer'},
-                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': 'infer'},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': 'infer'},
-                            {'sep': ';', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'}, # Ponto-e-vírgula com decimal PONTO
-                            {'sep': '\t', 'decimal': ',', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'}, # TAB como separador (TSV)
-                        ]
+                    try:
+                        uploaded_file_stream = BytesIO(file_bytes)
                         
-                        success = False
-                        for attempt in reading_attempts:
-                            try:
-                                uploaded_file_stream.seek(0)
+                        if file_name.endswith('.csv'):
+                            reading_attempts = [
+                                {'sep': ';', 'decimal': ',', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'},
+                                # CRÍTICO: Opções de skip row 1 para contornar lixo invisível
+                                {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': None, 'skiprows': 1},
+                                {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': None, 'skiprows': 1},
                                 
-                                # Extrai os parâmetros de cabeçalho e skiprows para tratamento especial
-                                header_param = attempt.pop('header', 'infer')
-                                skiprows_param = attempt.pop('skiprows', 0)
-                                
-                                # Tenta ler o CSV
-                                df_temp = pd.read_csv(
-                                    uploaded_file_stream, 
-                                    **attempt, 
-                                    header=(0 if header_param == 'infer' else header_param),
-                                    skiprows=skiprows_param
-                                )
-                                
-                                # Verifica se a leitura resultou em um DF utilizável (mais de 1 coluna)
-                                if df_temp.shape[1] > 1 and not df_temp.empty:
-                                    st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso: sep='{attempt['sep']}', decimal='{attempt['decimal']}', encoding='{attempt['encoding']}'" + (f" (Skip Rows: {skiprows_param}, Header: {header_param})" if skiprows_param > 0 or header_param != 'infer' else ""))
-                                    
-                                    # Se pulamos a linha de cabeçalho (skiprows=1 e header=None), precisamos renomear
-                                    if skiprows_param == 1 and header_param is None:
-                                        # Assumimos que a primeira linha (agora linha 0) é o cabeçalho
-                                        df_temp.columns = [f'col_{i}' for i in range(len(df_temp.columns))]
-                                        # O código de limpeza de coluna abaixo vai tratar
-                                        
-                                    success = True
-                                    break # Sai do loop de tentativas se for bem-sucedido
-                                else:
-                                    df_temp = None 
-
-                            except Exception:
-                                # Apenas continua para a próxima tentativa
-                                pass 
-                                
-                        if not success:
-                            st.error(f"Falha CRÍTICA ao ler o arquivo CSV '{file_name}'. Nenhuma das {len(reading_attempts)} tentativas de separador/decimal/encoding funcionou. Ele será ignorado.")
-
-                                
-                    elif file_name.endswith('.xlsx'):
-                        try:
-                            # A leitura de XLSX não tem as 9 tentativas, mas usa o openpyxl
-                            df_temp = pd.read_excel(uploaded_file_stream)
-                            if df_temp is not None and not df_temp.empty: 
-                                st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso (Excel).")
-                        except ImportError:
-                             st.error(f"Erro ao ler o XLSX '{file_name}': Missing optional dependency 'openpyxl'. Use pip or conda to install openpyxl. O ambiente python não está encontrando a biblioteca.")
-                        except Exception as inner_e:
-                            st.error(f"Erro ao ler o XLSX '{file_name}': {inner_e}")
+                                # Outras combinações normais
+                                {'sep': ';', 'decimal': ',', 'encoding': 'latin-1', 'skipinitialspace': True, 'header': 'infer'},
+                                {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'},
+                                {'sep': ',', 'decimal': '.', 'encoding': 'latin-1', 'skipinitialspace': True, 'header': 'infer'},
+                                {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': 'infer'},
+                                {'sep': ',', 'decimal': '.', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': 'infer'},
+                                {'sep': ';', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'}, 
+                                {'sep': '\t', 'decimal': ',', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'}, 
+                            ]
                             
+                            success = False
+                            for attempt in reading_attempts:
+                                try:
+                                    uploaded_file_stream.seek(0)
+                                    header_param = attempt.pop('header', 'infer')
+                                    skiprows_param = attempt.pop('skiprows', 0)
+                                    
+                                    df_temp = pd.read_csv(
+                                        uploaded_file_stream, 
+                                        **attempt, 
+                                        header=(0 if header_param == 'infer' else header_param),
+                                        skiprows=skiprows_param
+                                    )
+                                    
+                                    if df_temp.shape[1] > 1 and not df_temp.empty:
+                                        if skiprows_param == 1 and header_param is None:
+                                            # Se pulamos o cabeçalho, garantimos um nome de coluna
+                                            df_temp.columns = [f'col_{i}' for i in range(len(df_temp.columns))]
+                                            
+                                        success = True
+                                        break
+                                    else:
+                                        df_temp = None 
+    
+                                except Exception:
+                                    pass 
+                                    
+                            if not success:
+                                st.error(f"Falha CRÍTICA ao ler o arquivo CSV '{file_name}'. Ele será ignorado.")
+    
+                                    
+                        elif file_name.endswith('.xlsx'):
+                            try:
+                                df_temp = pd.read_excel(uploaded_file_stream)
+                                if df_temp is not None and not df_temp.empty: 
+                                    st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso (Excel).")
+                            except ImportError:
+                                 st.error(f"Erro ao ler o XLSX '{file_name}': Missing optional dependency 'openpyxl'.")
+                            except Exception as inner_e:
+                                st.error(f"Erro ao ler o XLSX '{file_name}': {inner_e}")
+                                
+                        
+                        if df_temp is not None and not df_temp.empty: 
+                            all_dataframes.append(df_temp)
+    
+                    except Exception as e:
+                        st.error(f"Erro inesperado no processamento do arquivo {file_name}. Ele será ignorado. Detalhe: {e}")
+                        pass 
+
+                if all_dataframes:
+                    df_novo_upload = pd.concat(all_dataframes, ignore_index=True)
                     
-                    # Verifica se df_temp foi definido e não está vazio
-                    if df_temp is not None and not df_temp.empty: 
-                        all_dataframes.append(df_temp)
+                    # <------------------------- DEBUG DE LEITURA ------------------------->
+                    st.sidebar.warning(f"DEBUG: df_novo_upload (Dados Carregados) lido com {len(df_novo_upload)} linhas.")
+                    # <--------------------------------------------------------------------->
 
-                except Exception as e:
-                    # Captura erros inesperados que não sejam de leitura interna (Ex: BytesIO problem)
-                    st.error(f"Erro inesperado no processamento do arquivo {file_name}. Ele será ignorado. Detalhe: {e}")
-                    pass 
-
-            if all_dataframes:
-                df_novo_upload = pd.concat(all_dataframes, ignore_index=True)
+                    # 3. Concatena o novo upload com o dataset base existente, se houver
+                    if not df_atual_base.empty:
+                        # Aplica a limpeza de colunas no DF atual para garantir que os nomes correspondam
+                        raw_columns_base = df_atual_base.columns.copy()
+                        cleaned_columns_base = [limpar_nome_coluna(col) for col in raw_columns_base]
+                        df_atual_base.columns = cleaned_columns
+                        
+                        # Concatena a base existente com o novo upload
+                        df_novo = pd.concat([df_atual_base, df_novo_upload], ignore_index=True)
+                        st.sidebar.info(f"CONCATENAÇÃO: {len(df_atual_base)} (Existente) + {len(df_novo_upload)} (Novo) = {len(df_novo)} linhas totais.")
+                    else:
+                        df_novo = df_novo_upload 
                 
-                # <------------------------- AQUI ESTÁ O DEBUG ------------------------->
-                st.sidebar.warning(f"DEBUG: df_novo_upload (Dados Carregados) lido com {len(df_novo_upload)} linhas.")
-                # <--------------------------------------------------------------------->
-
-                # 3. Concatena o novo upload com o dataset base existente, se houver
-                if not df_atual_base.empty:
-                    # Aplica a limpeza de colunas no DF atual para garantir que os nomes correspondam
-                    raw_columns_base = df_atual_base.columns.copy()
-                    cleaned_columns_base = [limpar_nome_coluna(col) for col in raw_columns_base]
-                    df_atual_base.columns = cleaned_columns_base
-                    
-                    # Concatena a base existente com o novo upload
-                    # Nota: O concat usa as colunas padronizadas da base e tenta mapear as do novo
-                    df_novo = pd.concat([df_atual_base, df_novo_upload], ignore_index=True)
-                    st.sidebar.info(f"CONCATENAÇÃO: {len(df_atual_base)} (Existente) + {len(df_novo_upload)} (Novo) = {len(df_novo)} linhas totais.")
-                else:
-                    df_novo = df_novo_upload # Se não escolheu somar, o df_novo é apenas o upload.
-            
             if df_novo.empty:
                 st.error("O conjunto de dados consolidado está vazio. Verifique se os arquivos foram lidos corretamente acima.")
                 st.session_state.dados_atuais = pd.DataFrame() 
@@ -734,12 +739,8 @@ with st.sidebar:
                 # --- DEFINIÇÃO DE COLUNAS TEXTO (INCLUINDO MÊS E ANO) ---
                 texto_default_base = ['nr_func', 'nome_funcionario', 'emp', 'eve', 'seq', 't', 'tip', 'descricao_evento', 'tipo_processo']
                 
-                if 'mes' in colunas_disponiveis: texto_default_base.append('mes')
-                if 'ano' in colunas_disponiveis: texto_default_base.append('ano')
-                
                 for col_name in ['mes', 'ano']:
-                    if col_name in colunas_disponiveis and col_name not in texto_default_base:
-                        texto_default_base.append(col_name)
+                    if col_name in colunas_disponiveis: texto_default_base.append(col_name)
 
                 texto_default = [col for col in colunas_disponiveis if col in texto_default_base]
 
@@ -790,7 +791,7 @@ with st.sidebar:
                     else:
                         
                         # --- DEFINE O NOME FINAL DO DATASET ---
-                        if selected_dataset_to_sum != "Novo Dataset (Substituir/Criar)":
+                        if selected_dataset_to_sum != "Criar Novo Dataset (Substituir/Criar)":
                             final_dataset_name = selected_dataset_to_sum # Mantém o nome do dataset que foi agregado
                         else:
                             final_dataset_name = dataset_name_to_use # Usa o nome digitado para um novo dataset
@@ -799,14 +800,18 @@ with st.sidebar:
                         
                         if sucesso:
                             st.success(f"Dataset '{st.session_state.current_dataset_name}' processado e salvo no catálogo!")
+                            
+                            # CRÍTICO: Limpa os dados pendentes e esconde o painel de reconfiguração
                             st.session_state.uploaded_files_data = {} 
                             st.session_state.show_reconfig_section = False
+                            
                             st.balloons()
                             limpar_filtros_salvos() 
                             st.rerun() 
             
     else: 
-        st.session_state.show_reconfig_section = False
+        # Garante que o painel de reconfiguração esteja fechado se não houver arquivos pendentes
+        st.session_state.show_reconfig_section = False 
         if not st.session_state.data_sets_catalog:
              st.info("Sistema pronto. O Dashboard será exibido após carregar, processar e selecionar um Dataset.")
 
@@ -840,8 +845,6 @@ else:
         
         with tab_container:
             
-            # FILTRO DE DATA (SLIDER) FOI REMOVIDO PERMANENTEMENTE
-            
             st.markdown("##### Filtros Categóricos")
             cols_container = st.columns(3) 
             
@@ -869,10 +872,12 @@ else:
                     opcoes_unicas_full = sorted(df_analise_base[col].astype(str).fillna('N/A').unique().tolist())
                     
                     if filtro_key not in st.session_state:
-                         st.session_state[filtro_key] = [] 
+                         # Inicializa com todas as opções selecionadas por default (nenhum filtro aplicado)
+                         st.session_state[filtro_key] = opcoes_unicas_full 
                     
-                    current_default = st.session_state.get(filtro_key, [])
+                    current_default = st.session_state.get(filtro_key, opcoes_unicas_full)
                     
+                    # Garantir que o default não tenha opções que sumiram (segurança)
                     safe_default = [opt for opt in current_default if opt in opcoes_unicas_full]
                     st.session_state[filtro_key] = safe_default 
 
@@ -881,73 +886,60 @@ else:
                     
                     label_status = "- ATIVO" if is_filtered and not is_all_selected else ("- INATIVO" if not is_filtered else "- TOTAL")
 
-                    with st.expander(f"**{col.replace('_', ' ').title()}** ({len(opcoes_unicas_full)} opções) {label_status}", expanded=False):
-                        col_sel_btn, col_clr_btn = st.columns(2)
-                        with col_sel_btn: st.button("✅ Selecionar Tudo", on_click=lambda c=col, s=suffix, ops=opcoes_unicas_full: set_multiselect_all(c, s, ops), key=f'select_all_btn_{suffix}_{col}', use_container_width=True)
-                        with col_clr_btn: st.button("🗑️ Limpar (Nenhum)", on_click=lambda c=col, s=suffix: set_multiselect_none(c, s), key=f'select_none_btn_{suffix}_{col}', use_container_width=True)
-                        st.markdown("---") 
+                    with st.expander(f"**{col.replace('_', ' ').title()}** {label_status}", expanded=False):
                         
-                        # Ordenação numérica para Mês e Ano
-                        if col in ['mes', 'ano'] and all(item.isdigit() or item == 'N/A' for item in opcoes_unicas_full):
-                            opcoes_unicas_full.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
+                        col_all, col_none = st.columns(2)
+                        with col_all:
+                            st.button("Selecionar Tudo", key=f"select_all_{filtro_key}", use_container_width=True, 
+                                     on_click=set_multiselect_all, args=(col, suffix, opcoes_unicas_full))
+                        with col_none:
+                            st.button("Limpar", key=f"select_none_{filtro_key}", use_container_width=True, 
+                                     on_click=set_multiselect_none, args=(col, suffix))
                         
-                        selecao_form = st.multiselect("Selecione:", options=opcoes_unicas_full, default=safe_default, key=filtro_key, label_visibility="collapsed")
-                        current_active_filters_dict[col] = selecao_form
-            
-            return current_active_filters_dict, data_range # data_range é None
-    
-    # data_range_base_render e data_range_comp_render serão None
-    filtros_ativos_base_render, data_range_base_render = render_filter_panel(tab_base, 'base', colunas_categoricas_filtro, df_analise_completo)
-    filtros_ativos_comp_render, data_range_comp_render = render_filter_panel(tab_comparacao, 'comp', colunas_categoricas_filtro, df_analise_completo)
-    
-    st.session_state.active_filters_base = filtros_ativos_base_render
-    st.session_state.active_filters_comp = filtros_ativos_comp_render
+                        selected_options = st.multiselect(
+                            f"Selecione as opções para {col}:",
+                            options=opcoes_unicas_full,
+                            default=safe_default,
+                            key=filtro_key,
+                            label_visibility="collapsed"
+                        )
+                    
+                    # Armazena a seleção para a função de caching e para o rótulo
+                    if selected_options:
+                        current_active_filters_dict[col] = selected_options
+                        
+        return current_active_filters_dict, data_range
+
+    # 1. Obter Filtros da BASE
+    filtros_base_ativos, data_range_base = render_filter_panel(tab_base, 'base', colunas_categoricas_filtro, df_analise_completo)
+    st.session_state.active_filters_base = filtros_base_ativos
+
+    # 2. Obter Filtros da COMPARAÇÃO
+    filtros_comp_ativos, data_range_comp = render_filter_panel(tab_comparacao, 'comp', colunas_categoricas_filtro, df_analise_completo)
+    st.session_state.active_filters_comp = filtros_comp_ativos
     
     st.markdown("---")
-    submitted = st.button("✅ Aplicar Filtros e Rodar Comparação", use_container_width=True, type='primary')
-    if submitted:
-        st.session_state['filtro_reset_trigger'] += 1 
-        st.rerun() 
-        
-    filtros_ativos_base_cache = st.session_state.active_filters_base
-    filtros_ativos_comp_cache = st.session_state.active_filters_comp
     
-    # Passamos None para data_range_base_cache e data_range_comp_cache na função de aplicação de filtros
-    df_analise_base_filtrado, df_analise_comp_filtrado = aplicar_filtros_comparacao(
+    # 3. Aplicar os filtros (usando cache)
+    df_base_filtrado, df_comp_filtrado = aplicar_filtros_comparacao(
         df_analise_completo, 
         colunas_categoricas_filtro, 
-        filtros_ativos_base_cache, 
-        filtros_ativos_comp_cache, 
+        st.session_state.active_filters_base, 
+        st.session_state.active_filters_comp, 
         colunas_data, 
-        None, 
-        None,
-        st.session_state['filtro_reset_trigger']
+        None, # data_range_base
+        None, # data_range_comp
+        st.session_state.filtro_reset_trigger # Trigger para forçar recálculo
     )
-    st.session_state.df_filtrado_base = df_analise_base_filtrado
-    st.session_state.df_filtrado_comp = df_analise_comp_filtrado
-    
-    df_base_safe = st.session_state.df_filtrado_base.copy() if not st.session_state.df_filtrado_base.empty else pd.DataFrame(columns=df_analise_completo.columns)
-    df_comp_safe = st.session_state.df_filtrado_comp.copy() if not st.session_state.df_filtrado_comp.empty else pd.DataFrame(columns=df_analise_completo.columns)
 
-
-    st.subheader("🌟 Resumo de Métricas e Análise de Variação - Visão Expert")
-    
-    if not df_base_safe.empty or not df_comp_safe.empty:
-        # Passamos None para data_range para a função de análise também.
-        gerar_analise_expert(
-            df_analise_completo, 
-            df_base_safe, 
-            df_comp_safe, 
-            filtros_ativos_base_cache, 
-            filtros_ativos_comp_cache, 
-            colunas_data, 
-            None, 
-            None
-        )
-    else:
-        st.warning("Um ou ambos os DataFrames (Base/Comparação) estão vazios após a aplicação dos filtros. Ajuste seus critérios e clique em 'Aplicar Filtros'.")
-
-    st.markdown("---")
-    
-    st.subheader("📚 Detalhe dos Dados Filtrados (Base)")
-    st.dataframe(df_base_safe, use_container_width=True)
+    # 4. Exibir a Análise Expert
+    gerar_analise_expert(
+        df_analise_completo, 
+        df_base_filtrado, 
+        df_comp_filtrado, 
+        st.session_state.active_filters_base, 
+        st.session_state.active_filters_comp, 
+        colunas_data, 
+        None, # data_range_base
+        None  # data_range_comp
+    )
