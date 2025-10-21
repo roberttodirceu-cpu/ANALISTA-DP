@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Limpeza Agressiva de Colunas e APENAS Filtros Categóricos (Multiselect)
+# app.py - Versão FINAL com Concateção, Limpeza Agressiva de Colunas e APENAS Filtros Categóricos (Multiselect)
 
 import streamlit as st
 import pandas as pd
@@ -163,8 +163,7 @@ if 'cols_to_exclude_analysis' not in st.session_state:
 @st.cache_data(show_spinner="Aplicando filtros de Base e Comparação...")
 def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtros_ativos_comp, col_data, data_range_base, data_range_comp, trigger):
     
-    # OBS: data_range_base e data_range_comp serão None, pois o slider foi removido.
-    # O filtro de data só será aplicado se os filtros categóricos MES e ANO forem usados.
+    # data_range_base e data_range_comp são passados como None (porque o slider foi removido)
 
     def _aplicar_filtro_single(df, col_filtros_list, filtros_ativos_dict):
         df_filtrado_temp = df.copy()
@@ -181,14 +180,13 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
                 # Converte a coluna para string para garantir a filtragem categórica
                 df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
         
-        # O filtro de Data (Slider) foi removido, então não há aplicação de data_range aqui.
         return df_filtrado_temp
     
     # Passamos apenas as listas de filtros categóricos
     df_base_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_base)
     df_comp_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_comp)
     
-    # Retornamos os DataFrames filtrados e None para os ranges de data, que não são usados
+    # Retornamos os DataFrames filtrados
     return df_base_filtrado, df_comp_filtrado
 
 
@@ -469,6 +467,22 @@ with st.sidebar:
             df_novo = pd.DataFrame()
             all_dataframes = []
             
+            # --- LÓGICA DE CARREGAMENTO PARA CONCATENAÇÃO (SOMA DE DADOS) ---
+            df_atual_base = pd.DataFrame()
+            dataset_name_to_use = st.session_state.get('current_dataset_name_input', default_dataset_name)
+            
+            # 1. Tenta carregar o dataset ativo atual se o nome de entrada for o mesmo do ativo
+            if st.session_state.current_dataset_name:
+                 # Se o usuário não alterou o nome, ou usou o mesmo nome, assumimos que ele quer atualizar o ativo
+                if dataset_name_to_use == st.session_state.current_dataset_name:
+                    st.sidebar.info(f"Atualizando o Dataset Ativo: '{st.session_state.current_dataset_name}'...")
+                    
+                    # Carrega a versão mais recente do DataFrame no catálogo
+                    if st.session_state.current_dataset_name in st.session_state.data_sets_catalog:
+                        df_atual_base = st.session_state.data_sets_catalog[st.session_state.current_dataset_name]['df'].copy()
+                        st.sidebar.info(f"Dados existentes carregados: {len(df_atual_base)} linhas.")
+                
+            
             for file_name, file_bytes in st.session_state.uploaded_files_data.items():
                 try:
                     uploaded_file_stream = BytesIO(file_bytes)
@@ -491,7 +505,28 @@ with st.sidebar:
                     pass 
 
             if all_dataframes:
-                df_novo = pd.concat(all_dataframes, ignore_index=True)
+                df_novo_upload = pd.concat(all_dataframes, ignore_index=True)
+                
+                # 2. Concatena o novo upload com o dataset base existente, se houver
+                if not df_atual_base.empty:
+                    # Aplica a limpeza de colunas no DF atual para garantir que os nomes correspondam
+                    raw_columns_base = df_atual_base.columns.copy()
+                    cleaned_columns_base = (
+                        raw_columns_base.astype(str)
+                        .str.strip()
+                        .str.lower()
+                        .str.normalize('NFKD')
+                        .str.encode('ascii', 'ignore').str.decode('utf-8')
+                        .str.replace(r'[^a-z0-9]+', '_', regex=True) 
+                        .str.strip('_') 
+                    )
+                    df_atual_base.columns = cleaned_columns_base
+                    
+                    # Concatena a base existente com o novo upload
+                    df_novo = pd.concat([df_atual_base, df_novo_upload], ignore_index=True)
+                    st.sidebar.info(f"CONCATENAÇÃO: {len(df_atual_base)} (Existente) + {len(df_novo_upload)} (Novo) = {len(df_novo)} linhas totais.")
+                else:
+                    df_novo = df_novo_upload
             
             if df_novo.empty:
                 st.error("O conjunto de dados consolidado está vazio.")
@@ -500,8 +535,6 @@ with st.sidebar:
                 
                 # --- CORREÇÃO DE LIMPEZA MAIS ROBUSTA (Padronização de Colunas) ---
                 raw_columns = df_novo.columns.copy()
-                
-                # Limpeza agressiva: strip, lower, remover acentos e substituir tudo que não é letra/número por underscore
                 cleaned_columns = (
                     raw_columns.astype(str)
                     .str.strip()
@@ -542,7 +575,6 @@ with st.sidebar:
                 if 'mes' in colunas_disponiveis: texto_default_base.append('mes')
                 if 'ano' in colunas_disponiveis: texto_default_base.append('ano')
                 
-                # Remove colunas que podem ser erroneamente inferidas como data/numérico, mas que devem ser texto
                 for col_name in ['mes', 'ano']:
                     if col_name in colunas_disponiveis and col_name not in texto_default_base:
                         texto_default_base.append(col_name)
@@ -594,8 +626,15 @@ with st.sidebar:
                     elif not colunas_para_filtro:
                         st.warning("Selecione pelo menos uma coluna na seção 'Colunas para FILTROS'.")
                     else:
-                        dataset_name_to_save = st.session_state.get('current_dataset_name_input', default_dataset_name)
-                        sucesso, df_processado_salvo = processar_dados_atuais(df_processado, colunas_para_filtro, colunas_valor_dashboard, dataset_name_to_save)
+                        
+                        # --- FORÇA O NOME DO DATASET ATIVO SE ESTIVER ATUALIZANDO ---
+                        if st.session_state.current_dataset_name and dataset_name_to_use == st.session_state.current_dataset_name:
+                            final_dataset_name = st.session_state.current_dataset_name
+                        else:
+                            final_dataset_name = dataset_name_to_use
+                            
+                        sucesso, df_processado_salvo = processar_dados_atuais(df_processado, colunas_para_filtro, colunas_valor_dashboard, final_dataset_name)
+                        
                         if sucesso:
                             st.success(f"Dataset '{st.session_state.current_dataset_name}' processado e salvo no catálogo!")
                             st.session_state.uploaded_files_data = {} 
@@ -622,7 +661,7 @@ else:
     
     colunas_categoricas_filtro = st.session_state.colunas_filtros_salvas
     
-    # Colunas de data não são mais usadas para o SLIDER, mas ainda são necessárias para o rótulo
+    # Colunas de data não são usadas para o SLIDER, mas ainda são necessárias para o rótulo
     _, colunas_data = encontrar_colunas_tipos(df_analise_completo) 
     
     st.markdown("#### 🔍 Configuração de Análise de Variação")
@@ -636,11 +675,10 @@ else:
         
         current_active_filters_dict = {}
         data_range = None # Garantimos que data_range seja None
-        df_base_temp = df_analise_base.copy()
         
         with tab_container:
             
-            # BLOCO DE FILTRO DE DATA (SLIDER) REMOVIDO PARA USAR APENAS MULTISELECTS
+            # FILTRO DE DATA (SLIDER) FOI REMOVIDO PERMANENTEMENTE
             
             st.markdown("##### Filtros Categóricos")
             cols_container = st.columns(3) 
@@ -665,7 +703,7 @@ else:
                 with cols_container[i % 3]:
                     filtro_key = f'filtro_key_{suffix}_{col}'
                     
-                    # Usamos o DF COMPLETO para obter as opções únicas para que o filtro não "suma"
+                    # Usamos o DF COMPLETO para obter as opções únicas
                     opcoes_unicas_full = sorted(df_analise_base[col].astype(str).fillna('N/A').unique().tolist())
                     
                     if filtro_key not in st.session_state:
@@ -712,15 +750,15 @@ else:
     filtros_ativos_base_cache = st.session_state.active_filters_base
     filtros_ativos_comp_cache = st.session_state.active_filters_comp
     
-    # Passamos None para data_range_base_cache e data_range_comp_cache
+    # Passamos None para data_range_base_cache e data_range_comp_cache na função de aplicação de filtros
     df_analise_base_filtrado, df_analise_comp_filtrado = aplicar_filtros_comparacao(
         df_analise_completo, 
         colunas_categoricas_filtro, 
         filtros_ativos_base_cache, 
         filtros_ativos_comp_cache, 
         colunas_data, 
-        None, # data_range_base_cache 
-        None, # data_range_comp_cache
+        None, 
+        None,
         st.session_state['filtro_reset_trigger']
     )
     st.session_state.df_filtrado_base = df_analise_base_filtrado
@@ -733,6 +771,7 @@ else:
     st.subheader("🌟 Resumo de Métricas e Análise de Variação - Visão Expert")
     
     if not df_base_safe.empty or not df_comp_safe.empty:
+        # Passamos None para data_range para a função de análise também.
         gerar_analise_expert(
             df_analise_completo, 
             df_base_safe, 
@@ -740,8 +779,8 @@ else:
             filtros_ativos_base_cache, 
             filtros_ativos_comp_cache, 
             colunas_data, 
-            None, # data_range_base_cache
-            None  # data_range_comp_cache
+            None, 
+            None
         )
     else:
         st.warning("Um ou ambos os DataFrames (Base/Comparação) estão vazios após a aplicação dos filtros. Ajuste seus critérios e clique em 'Aplicar Filtros'.")
