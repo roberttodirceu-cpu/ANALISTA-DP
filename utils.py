@@ -1,119 +1,142 @@
-# utils.py
-
 import pandas as pd
 import numpy as np
 from datetime import datetime
 
+# --- 1. Funções de Formatação e Auxílio ---
+
 def formatar_moeda(valor):
-    """Formata um valor float ou int para o formato monetário BRL."""
-    if pd.isna(valor) or valor is None:
+    """
+    Formata um valor numérico para o padrão de moeda (BRL)
+    com separador de milhar e duas casas decimais.
+    Retorna 'R$ 0,00' se o valor for nulo (NaN).
+    """
+    if pd.isna(valor):
         return "R$ 0,00"
-    # Garante que o valor é um float antes de formatar
-    try:
-        valor = float(valor)
-    except:
-        return "R$ N/A"
-        
-    # Formatação com ponto como separador de milhar e vírgula como decimal
+    
+    # Converte para float, formata para string e substitui os separadores
+    # Usa 'X' temporariamente para evitar conflito na troca de ponto por vírgula
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def encontrar_colunas_tipos(df):
+    """
+    Identifica as colunas de Data e as demais (numéricas/categóricas).
+    """
+    colunas_data = []
+    outras_colunas = []
+    
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            colunas_data.append(col)
+        else:
+            outras_colunas.append(col)
+            
+    return outras_colunas, colunas_data
+
+
+def verificar_ausentes(df, colunas):
+    """
+    Verifica e retorna um dicionário com a contagem de valores ausentes (NaN ou strings vazias)
+    por coluna, apenas para as colunas listadas. 
+    A correção garante que a verificação é robusta para strings vazias.
+    """
+    ausentes = {}
+    total_linhas = len(df)
+    
+    # Itera apenas sobre as colunas que foram selecionadas para filtro
+    for col in colunas:
+        if col in df.columns:
+            # Conta o número de NaNs (inclui NaT para datas)
+            n_nan = df[col].isnull().sum()
+            
+            # Conta o número de strings vazias ou apenas espaços
+            n_vazio = 0
+            if df[col].dtype == 'object' or pd.api.types.is_categorical_dtype(df[col]):
+                 n_vazio = (df[col].astype(str).str.strip() == '').sum()
+            
+            n_ausentes = n_nan + n_vazio
+            
+            if n_ausentes > 0:
+                ausentes[col] = (n_ausentes, total_linhas)
+                
+    return ausentes
+
+# --- 2. Função Principal de Conversão de Tipos ---
 
 def inferir_e_converter_tipos(df, colunas_texto, colunas_moeda):
     """
-    Tenta inferir e converter tipos de colunas em um DataFrame,
-    priorizando as colunas de texto e moeda fornecidas.
-    """
-    df_novo = df.copy()
+    Processa um DataFrame, convertendo tipos de dados com base nas seleções.
     
-    # 1. Limpeza e Inferência Básica
-    for col in df_novo.columns:
-        # Tenta converter para float se for uma coluna de Moeda
-        if col in colunas_moeda:
-            # CRÍTICO: Conversão explícita de string para número (tratando vírgula decimal)
+    Args:
+        df (pd.DataFrame): DataFrame a ser processado.
+        colunas_texto (list): Colunas a serem forçadas como string.
+        colunas_moeda (list): Colunas a serem forçadas como numéricas (float).
+
+    Returns:
+        pd.DataFrame: DataFrame com tipos de dados convertidos.
+    """
+    df_copy = df.copy()
+    
+    # 1. Limpeza de Nomes de Coluna
+    df_copy.columns = df_copy.columns.str.strip().str.lower().str.replace('[^a-z0-9_]', '', regex=True)
+    
+    # 2. Conversão de Colunas de TEXTO/ID (selecionadas pelo usuário)
+    for col in colunas_texto:
+        if col in df_copy.columns:
+            # Força para string, substitui nulos por 'N/A' e converte para categoria
+            df_copy[col] = df_copy[col].astype(str).fillna('N/A').str.strip().astype('category')
+    
+    # 3. Conversão de Colunas de MOEDA (selecionadas pelo usuário)
+    for col in colunas_moeda:
+        if col in df_copy.columns:
             try:
-                # Remove espaços, remove separador de milhar (ponto), troca separador decimal (vírgula por ponto)
-                df_novo[col] = df_novo[col].astype(str).str.strip().str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-                df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce')
+                # Trata strings de moeda e converte para float
+                if df_copy[col].dtype == 'object':
+                    # Remove R$, ponto de milhar e substitui vírgula por ponto
+                    df_copy[col] = (df_copy[col]
+                                    .astype(str)
+                                    .str.replace(r'[R$]', '', regex=True)
+                                    .str.replace('.', '', regex=False)
+                                    .str.replace(',', '.', regex=False)
+                                    .str.strip()
+                                    .replace('', np.nan)) # Trata string vazia como NaN
+                
+                df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce').astype(float)
             except Exception:
-                df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce')
-        
-        # Converte colunas explicitamente marcadas para string/object
-        elif col in colunas_texto:
-            df_novo[col] = df_novo[col].astype('object')
-        
-        # Tenta converter colunas numéricas restantes para int/float se não forem datas
-        elif df_novo[col].dtype not in ['datetime64[ns]']:
+                # Se falhar, mantém a coluna original
+                pass 
+                
+    # 4. Inferência Automática para as Colunas Restantes
+    for col in df_copy.columns:
+        if col not in colunas_texto and col not in colunas_moeda:
+            # Tenta converter para data
             try:
-                # Verifica se são todos inteiros, se sim, converte para inteiro
-                if df_novo[col].dropna().apply(lambda x: float(x).is_integer()).all():
-                    df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce', downcast='integer')
-                else:
-                    df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce')
+                df_temp = pd.to_datetime(df_copy[col], errors='coerce')
+                # Se houver mais que 50% de valores válidos de data, converte
+                if df_temp.notna().sum() / len(df_temp) > 0.5:
+                    df_copy[col] = df_temp
+                    continue
             except:
                 pass
 
-    # 2. Conversão de Colunas de Data (Se for ANO e MES)
-    if 'ano' in df_novo.columns and 'mes' in df_novo.columns:
-        try:
-            # Cria uma coluna de data única para filtragem
-            df_novo['data_referencia'] = pd.to_datetime(df_novo['ano'].astype(str) + '-' + df_novo['mes'].astype(str) + '-01', format='%Y-%m-%d', errors='coerce')
-        except Exception:
-            pass
-            
-    # 3. Conversão final para categorias e remoção de espaços
-    for col in df_novo.select_dtypes(include=['object']):
-        df_novo[col] = df_novo[col].astype(str).str.strip().str.upper() # Padronização para UPPERCASE
-        df_novo[col] = df_novo[col].astype('category')
+            # Tenta converter para numérico (int ou float)
+            try:
+                if pd.api.types.is_numeric_dtype(df_copy[col]):
+                    continue
+                
+                df_temp = pd.to_numeric(df_copy[col], errors='coerce')
+                # Se houver mais que 50% de valores válidos numéricos, converte
+                if df_temp.notna().sum() / len(df_temp) > 0.5:
+                    df_copy[col] = df_temp
+                    continue
+            except:
+                pass
 
-    return df_novo
+            # Converte o restante para categórico (ideal para filtros)
+            if df_copy[col].dtype == 'object' and df_copy[col].nunique() < 50:
+                df_copy[col] = df_copy[col].astype(str).fillna('N/A').str.strip().astype('category')
+            elif df_copy[col].dtype == 'object':
+                # Se muitos valores únicos, mantém como string/object
+                 df_copy[col] = df_copy[col].astype(str).fillna('N/A').str.strip()
 
-def encontrar_colunas_tipos(df):
-    """Retorna listas de colunas categoricas e de data."""
-    colunas_categoricas = df.select_dtypes(include=['object', 'category']).columns.tolist()
-    colunas_data = df.select_dtypes(include=['datetime64[ns]']).columns.tolist()
-    return colunas_categoricas, colunas_data
-
-def verificar_ausentes(df):
-    """Retorna um DataFrame com a contagem e percentual de valores ausentes."""
-    ausentes = df.isnull().sum()
-    percentual = 100 * ausentes / len(df)
-    df_ausentes = pd.DataFrame({'Contagem de Ausentes': ausentes, 'Percentual (%)': percentual})
-    return df_ausentes[df_ausentes['Contagem de Ausentes'] > 0].sort_values(by='Contagem de Ausentes', ascending=False)
-
-def gerar_rotulo_filtro(df_completo, filtros_ativos_dict, colunas_data, data_range):
-    """Gera um rótulo resumido dos filtros aplicados."""
-    rotulos = []
-    
-    # Rótulos Categóricos
-    for col, selecoes in filtros_ativos_dict.items():
-        if col not in df_completo.columns: continue
-        opcoes_unicas = df_completo[col].astype(str).fillna('N/A').unique().tolist()
-        
-        # Só mostra se o filtro estiver ativo (len > 0 e len < total de opções)
-        if selecoes and len(selecoes) > 0 and len(selecoes) < len(opcoes_unicas):
-            rotulos.append(f"**{col.replace('_', ' ').title()}**: ({len(selecoes)} opções)")
-    
-    # Rótulos de Data
-    if data_range and colunas_data:
-        data_col = colunas_data[0]
-        # Converte para datetime e remove NaT antes de calcular min/max
-        data_series = pd.to_datetime(df_completo[data_col], errors='coerce').dropna()
-        if not data_series.empty:
-            data_min_df = data_series.min().to_pydatetime()
-            data_max_df = data_series.max().to_pydatetime()
-            
-            data_range_start = pd.to_datetime(data_range[0]).to_pydatetime()
-            data_range_end = pd.to_datetime(data_range[1]).to_pydatetime()
-            
-            # Compara se o intervalo selecionado é diferente do intervalo total do DF (com tolerância de 1 dia)
-            is_start_filtered = (data_range_start - data_min_df).days > 0
-            is_end_filtered = (data_max_df - data_range_end).days > 0
-
-            if is_start_filtered or is_end_filtered:
-                data_inicio = data_range_start.strftime('%Y-%m-%d')
-                data_fim = data_range_end.strftime('%Y-%m-%d')
-                rotulos.append(f"**Data ({data_col.title()})**: {data_inicio} até {data_fim}")
-            
-    if not rotulos:
-        return "Nenhum Filtro Ativo. (Análise no Total Geral)"
-        
-    return " | ".join(rotulos)
+    return df_copy
