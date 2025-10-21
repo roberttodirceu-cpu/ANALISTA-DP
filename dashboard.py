@@ -1,4 +1,4 @@
-# app.py
+# app.py - Versão FINAL com Limpeza Agressiva de Colunas
 
 import streamlit as st
 import pandas as pd
@@ -31,7 +31,6 @@ PERSISTENCE_PATH = 'data/data_sets_catalog.pkl'
 
 # ==============================================================================
 # FUNÇÕES DE GERENCIAMENTO DE ESTADO E PERSISTÊNCIA
-# (Funções auxiliares mantidas)
 # ==============================================================================
 
 def load_catalog():
@@ -243,8 +242,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         
     # VERIFICAÇÃO DE FUNCIONÁRIOS ÚNICOS
     if col_func not in df_completo.columns:
-        st.error(f"Erro Crítico: A coluna '{col_func}' não foi encontrada no DataFrame. Garanta que 'NOME FUNCIONARIO' foi selecionada como coluna de TEXTO no upload.")
-        # É seguro retornar aqui, pois o sidebar tem a lógica para tentar renomear e o erro é exibido.
+        st.error(f"Erro Crítico: A coluna '{col_func}' não foi encontrada no DataFrame. O pré-processamento de nomes de coluna falhou. Limpe o cache e tente novamente. Colunas atuais: {df_completo.columns.tolist()}")
         return
 
     def calcular_venc_desc(df):
@@ -506,24 +504,41 @@ with st.sidebar:
                 st.error("O conjunto de dados consolidado está vazio.")
                 st.session_state.dados_atuais = pd.DataFrame() 
             else:
-                # Padronização de nomes de colunas (1ª tentativa de limpeza)
-                df_novo.columns = df_novo.columns.str.strip().str.lower().str.replace(' ', '_', regex=False)
                 
-                # --- CORREÇÃO CRÍTICA: GARANTE O NOME DA COLUNA DO FUNCIONÁRIO ---
-                # Procura por qualquer coluna que contenha 'nome' e 'func'
-                employee_col_candidates = [col for col in df_novo.columns if 'nome' in col and 'func' in col]
+                # --- CORREÇÃO DE LIMPEZA MAIS ROBUSTA (AQUI ESTÁ A CHAVE) ---
+                raw_columns = df_novo.columns.copy()
                 
-                # Se 'nome_funcionario' não está lá, mas temos um candidato:
-                if 'nome_funcionario' not in df_novo.columns and employee_col_candidates:
-                    # Renomeia o primeiro candidato encontrado para o nome padrão esperado
-                    df_novo.rename(columns={employee_col_candidates[0]: 'nome_funcionario'}, inplace=True)
-                    st.sidebar.info(f"Col. de Funcionário renomeada: '{employee_col_candidates[0]}' -> 'nome_funcionario'")
-                    
-                if 'nome_funcionario' not in df_novo.columns:
-                     st.sidebar.warning("Aviso: A coluna 'nome_funcionario' não foi encontrada após processamento. A contagem de funcionários pode ser imprecisa.")
+                # Limpeza agressiva: strip, lower, remover acentos e substituir tudo que não é letra/número por underscore
+                cleaned_columns = (
+                    raw_columns.astype(str)
+                    .str.strip()
+                    .str.lower()
+                    .str.normalize('NFKD')
+                    .str.encode('ascii', 'ignore').str.decode('utf-8')
+                    .str.replace(r'[^a-z0-9]+', '_', regex=True) # Substitui sequências de caracteres estranhos por um único underscore
+                    .str.strip('_') # Remove underscore inicial/final
+                )
+                df_novo.columns = cleaned_columns
+                colunas_disponiveis = df_novo.columns.tolist()
+
+                # --- VERIFICAÇÃO E RENOMEAÇÃO FORÇADA DE 'NOME FUNCIONARIO' ---
+                target_col = 'nome_funcionario'
+                
+                if target_col not in colunas_disponiveis:
+                    # Se a limpeza agressiva não funcionou, procuramos pela coluna original ('NOME FUNCIONARIO')
+                    # antes da limpeza, ou por qualquer coluna que contenha 'nome' e 'func'
+                    employee_col_candidates = [col for col in colunas_disponiveis if 'nome' in col and 'func' in col]
+
+                    if employee_col_candidates:
+                        original_candidate = employee_col_candidates[0]
+                        df_novo.rename(columns={original_candidate: target_col}, inplace=True)
+                        st.sidebar.info(f"Col. de Funcionário renomeada: '{original_candidate}' -> '{target_col}'")
+                        colunas_disponiveis = df_novo.columns.tolist() # Atualiza a lista de colunas
+                    else:
+                        st.sidebar.warning("Aviso: Não foi possível identificar a coluna de nome de funcionário automaticamente.")
+                        
                 # --- FIM DA CORREÇÃO CRÍTICA ---
                 
-                colunas_disponiveis = df_novo.columns.tolist()
                 st.info(f"Total de {len(df_novo)} linhas para configurar.")
                 
                 moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
