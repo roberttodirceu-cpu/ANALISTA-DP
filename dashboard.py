@@ -10,6 +10,8 @@ import pickle
 # Importa as funções do utils.py
 try:
     # Assumindo que a função formatar_moeda, inferir_e_converter_tipos, etc, estão no utils.py
+    # OBS: Se você não tiver o arquivo 'utils.py', substitua estas linhas pelas funções reais.
+    # Caso o 'utils.py' esteja faltando, o Streamlit irá parar aqui.
     from utils import formatar_moeda, inferir_e_converter_tipos, encontrar_colunas_tipos, verificar_ausentes
 except ImportError:
     st.error("Erro: O arquivo 'utils.py' não foi encontrado. Certifique-se de que ele está no mesmo diretório.")
@@ -49,6 +51,7 @@ initial_filters = []
 initial_values = []
 initial_name = ""
 if st.session_state.data_sets_catalog:
+    # Pega o último dataset carregado/salvo
     last_name = list(st.session_state.data_sets_catalog.keys())[-1]
     data_entry = st.session_state.data_sets_catalog[last_name]
     initial_df = data_entry.get('df', pd.DataFrame())
@@ -98,10 +101,6 @@ def limpar_filtros_salvos():
 def set_multiselect_all(key, suffix, options_list):
     """Callback para o botão 'Selecionar Tudo'."""
     st.session_state[f'filtro_key_{suffix}_{key}'] = options_list
-    # Não usar st.rerun() em callbacks de botão que definem estado para multiselect, 
-    # pois o Streamlit já trata a re-renderização após a interação com o botão.
-    # A exceção são as chamadas no sidebar para configurar colunas.
-    # Aqui vamos usar o truque de 'st.form_submit_button' ou 'st.button' para gatilhar a filtragem.
     pass
 
 def set_multiselect_none(key, suffix):
@@ -121,7 +120,7 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name
     if st.session_state.uploaded_files_data:
         file_names = list(st.session_state.uploaded_files_data.keys())
         # Mantém o nome do input se houver múltiplos arquivos, senão usa o nome do arquivo único
-        base_name = dataset_name if len(file_names) > 1 else os.path.splitext(file_names[0])[0]
+        base_name = dataset_name if len(file_names) > 1 or not file_names else os.path.splitext(file_names[0])[0]
     else:
         base_name = dataset_name
         
@@ -268,7 +267,8 @@ with st.sidebar:
                 st.sidebar.error(f"Erro ao remover arquivo de persistência: {e}")
         keys_to_clear = [k for k in st.session_state.keys() if not k.startswith('_')]
         for key in keys_to_clear:
-            del st.session_state[key]
+            if key in st.session_state: # Verifica se a chave existe antes de deletar
+                del st.session_state[key]
         st.info("Cache de dados e estado da sessão limpos! Recarregando...")
         st.rerun()
 
@@ -325,46 +325,54 @@ with st.sidebar:
         
         st.markdown("---")
         
-        # --- Lógica de Configuração de Colunas ---
+        # --- Lógica de Configuração de Colunas (COM CORREÇÃO PARA O ERRO 'df_temp is not defined') ---
         if st.session_state.show_reconfig_section:
             
             df_novo = pd.DataFrame()
             all_dataframes = []
             
             for file_name, file_bytes in st.session_state.uploaded_files_data.items():
+                
+                # CORREÇÃO: Inicializa df_temp como None em cada iteração
+                df_temp = None 
+                
                 try:
                     uploaded_file_stream = BytesIO(file_bytes)
+                    
                     if file_name.endswith('.csv'):
+                        # Primeira tentativa de leitura (separador ';')
                         try:
-                            # Tenta ler com separador ';', decimal ','
                             uploaded_file_stream.seek(0)
                             df_temp = pd.read_csv(uploaded_file_stream, sep=';', decimal=',', encoding='utf-8')
                         except Exception:
-                            # Tenta ler com separador ',', decimal '.'
+                            # Segunda tentativa (separador ',')
                             uploaded_file_stream.seek(0)
                             df_temp = pd.read_csv(uploaded_file_stream, sep=',', decimal='.', encoding='utf-8')
+                            
                     elif file_name.endswith('.xlsx'):
                         df_temp = pd.read_excel(uploaded_file_stream)
                     
-                    if not df_temp.empty:
+                    # CORREÇÃO: Apenas adiciona se df_temp foi definido (não é None) e não está vazio
+                    if df_temp is not None and not df_temp.empty: 
                         all_dataframes.append(df_temp)
                         
                 except Exception as e:
-                    st.error(f"Erro ao ler o arquivo {file_name}: {e}")
+                    # Captura erros gerais de leitura e informa ao usuário
+                    st.error(f"Erro ao ler o arquivo {file_name}: {e}. O arquivo será ignorado.")
                     pass 
 
             if all_dataframes:
-                # Concatena todos os DataFrames
+                # Concatena todos os DataFrames que foram lidos com sucesso
                 df_novo = pd.concat(all_dataframes, ignore_index=True)
             
             if df_novo.empty:
-                st.error("O conjunto de dados consolidado está vazio.")
+                st.error("O conjunto de dados consolidado está vazio. Nenhum arquivo pôde ser lido com sucesso.")
                 st.session_state.dados_atuais = pd.DataFrame() 
             else:
                 # Normaliza colunas antes da inferência
                 df_novo.columns = df_novo.columns.str.strip().str.lower().str.replace(' ', '_').str.replace('ã', 'a').str.replace('ç', 'c')
                 colunas_disponiveis = df_novo.columns.tolist()
-                st.info(f"Dados consolidados de {len(st.session_state.uploaded_files_data)} arquivos. Total de {len(df_novo)} linhas.")
+                st.info(f"Dados consolidados de {len(all_dataframes)} arquivo(s) lido(s) com sucesso. Total de {len(df_novo)} linhas.")
                 
                 # --- Seleção de Colunas (Moeda, Texto, Filtros) ---
                 moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
@@ -670,7 +678,7 @@ else:
     st.markdown(f"""
         <div style="padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 15px;">
             <p style="margin: 0; font-weight: bold; color: #343a40;"><span style="color: #007bff;">BASE (Ref.):</span> {rotulo_base}</p>
-            <p style="margin: 0; font-weight: bold; color: #343a40;"><span style="color: #dc3545;">COMPARAÇÃO (Alvo):</span> {rotulo_comp}</p>
+            <p style="margin: 0; font-weight: bold; color: #dc3545;"><span style="color: #dc3545;">COMPARAÇÃO (Alvo):</span> {rotulo_comp}</p>
         </div>
     """, unsafe_allow_html=True)
     
@@ -710,8 +718,7 @@ else:
         delta_perc = (delta_abs / base) * 100
         delta_label = f"{delta_perc:+.2f}%"
         
-        # Corrigindo a lógica de cor para KPI (aumentou = bom, diminuiu = ruim, a menos que seja custo/despesa)
-        # Como o contexto de "bom" ou "ruim" não é definido, usaremos: POSITIVO = "normal" (verde), NEGATIVO = "inverse" (vermelho).
+        # Cor: POSITIVO = "normal" (verde), NEGATIVO = "inverse" (vermelho).
         delta_color = 'normal' if delta_abs >= 0 else 'inverse' 
         
         return delta_abs, delta_label, delta_color
@@ -988,7 +995,7 @@ else:
     for col in colunas_numericas_salvas: 
         if col in df_exibicao.columns:
             # Assume que a coluna é moeda se foi classificada como tal na configuração
-            if is_currency_metric:
+            if is_currency_metric: # Usa a lógica da métrica principal para o formato, ou ajusta se necessário
                 df_exibicao[col] = df_exibicao[col].apply(lambda x: formatar_moeda(x) if pd.notna(x) else '')
             else:
                 df_exibicao[col] = df_exibicao[col].apply(lambda x: f"{x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.') if pd.notna(x) else '')
@@ -1010,12 +1017,13 @@ else:
     xlsx_output = BytesIO()
     xlsx_data = None
     try:
+        # Importa openpyxl DENTRO do try/except, já que pode não estar instalado
         import openpyxl 
         with pd.ExcelWriter(xlsx_output, engine='openpyxl') as writer:
             df_base.to_excel(writer, index=False, sheet_name='Dados Filtrados')
         xlsx_data = xlsx_output.getvalue()
     except ImportError:
-        st.warning("Instale 'openpyxl' para habilitar o download em XLSX.")
+        st.caption("Instale 'openpyxl' (`pip install openpyxl`) para habilitar o download em XLSX.")
     except Exception as e:
          st.error(f"Erro ao criar o arquivo XLSX: {e}")
 
