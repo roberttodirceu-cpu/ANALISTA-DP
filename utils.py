@@ -3,7 +3,6 @@ import numpy as np
 import locale
 
 # --- Configuração de Locale para Moeda (necessário para formatar_moeda) ---
-# Tenta configurar o locale para Português do Brasil, necessário para formatar_moeda
 try:
     locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
 except locale.Error:
@@ -11,7 +10,6 @@ except locale.Error:
         # Tenta a alternativa comum no Windows
         locale.setlocale(locale.LC_ALL, 'Portuguese_Brazil.1252')
     except locale.Error:
-        # Define um fallback, mas a formatação de moeda pode não ser a ideal
         print("Aviso: Não foi possível configurar o locale 'pt_BR.UTF-8' ou 'Portuguese_Brazil.1252'.")
         pass
 
@@ -21,10 +19,8 @@ def formatar_moeda(valor):
     if pd.isna(valor) or not np.isfinite(valor):
         return "R$ 0,00"
     try:
-        # Usa o locale configurado
         return locale.currency(valor, symbol='R$', grouping=True)
     except Exception:
-        # Fallback manual em caso de falha de locale
         return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
@@ -38,7 +34,6 @@ def inferir_e_converter_tipos(df, colunas_texto_id, colunas_moeda):
     # 1. Converter Colunas de Moeda
     for col in colunas_moeda:
         if col in df_temp.columns:
-            # Tenta converter para string, substitui vírgula por ponto, e converte para float
             df_temp[col] = df_temp[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
             df_temp[col] = pd.to_numeric(df_temp[col], errors='coerce')
             df_temp[col] = df_temp[col].fillna(0).astype(float) # Zera NaNs após conversão
@@ -51,14 +46,12 @@ def inferir_e_converter_tipos(df, colunas_texto_id, colunas_moeda):
 
     # 3. Inferência Geral e Conversão de Categóricos
     for col in df_temp.columns:
-        # Colunas com poucos valores únicos (e que não são data, float ou int) viram 'category'
         if df_temp[col].dtype == 'object' or (df_temp[col].nunique() / len(df_temp) < 0.1 and df_temp[col].nunique() < 50 and df_temp[col].dtype != 'datetime64[ns]'):
             try:
-                # Tenta conversão forçada para categoria para otimizar memória/filtros
                 if df_temp[col].dtype != 'category':
                     df_temp[col] = df_temp[col].astype(str).astype('category')
             except:
-                pass # Ignora se falhar
+                pass
                 
     # 4. Ajuste Específico para MES/ANO: Devem ser categóricos/string para filtros
     for col in ['mes', 'ano']:
