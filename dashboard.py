@@ -8,7 +8,7 @@ from io import BytesIO
 import pickle
 import csv # Necessário para usar o quoting
 
-# IMPORTAÇÃO DO UTILS.PY CORRIGIDO
+# IMPORTAÇÃO DO UTILS.PY
 from utils import formatar_moeda, inferir_e_converter_tipos, encontrar_colunas_tipos, verificar_ausentes
 
 # --- Configuração da Página e Persistência ---
@@ -332,7 +332,7 @@ with st.sidebar:
                                     )
                                 except Exception as e3:
                                     
-                                    # NOVA TENTATIVA 4 (Melhoria): BR, Python Engine, Quoting (força leitura como string/object)
+                                    # TENTATIVA 4: BR, Python Engine, Quoting (força leitura como string/object, UTF-8)
                                     try:
                                         uploaded_file_stream.seek(0)
                                         df_temp = pd.read_csv(
@@ -342,11 +342,10 @@ with st.sidebar:
                                             skipinitialspace=True,
                                             engine='python', 
                                             quoting=csv.QUOTE_MINIMAL,
-                                            # **IMPORTANTE**: Removendo 'decimal' e 'thousands' para que o util.py faça a limpeza
                                         )
                                     except Exception as e4:
                                         
-                                        # NOVA TENTATIVA 5 (Melhoria): BR, Python Engine, Quoting, Latin-1 (força leitura como string/object)
+                                        # TENTATIVA 5: BR, Python Engine, Quoting, Latin-1 (para problemas de codificação)
                                         try:
                                             uploaded_file_stream.seek(0)
                                             df_temp = pd.read_csv(
@@ -356,15 +355,31 @@ with st.sidebar:
                                                 skipinitialspace=True,
                                                 engine='python', 
                                                 quoting=csv.QUOTE_MINIMAL,
-                                                # **IMPORTANTE**: Removendo 'decimal' e 'thousands' para que o util.py faça a limpeza
                                             )
                                         except Exception as e5:
-                                            # Falha total
-                                            st.error(f"""
-                                                Falha total ao ler o arquivo {file_name}. Detalhes da última falha: {e5}.
-                                                Seus dados estão sendo ignorados. Por favor, verifique o delimitador.
-                                            """)
-                                            df_temp = None
+                                            
+                                            # TENTATIVA 6 (NOVA E AGRESSIVA): Pula linhas malformadas, motor Python/UTF-8
+                                            try:
+                                                uploaded_file_stream.seek(0)
+                                                df_temp = pd.read_csv(
+                                                    uploaded_file_stream, 
+                                                    sep=';', 
+                                                    encoding='utf-8', 
+                                                    skipinitialspace=True,
+                                                    engine='python', 
+                                                    quoting=csv.QUOTE_MINIMAL,
+                                                    on_bad_lines='skip' # Ignora linhas com número de colunas inconsistente
+                                                )
+                                            except Exception as e6:
+                                                # Falha total
+                                                st.error(f"""
+                                                    Falha total ao ler o arquivo {file_name}.
+                                                    Detalhes: A leitura falhou após 6 tentativas. Isso indica um problema grave de formatação.
+                                                    **Por favor, verifique se:**
+                                                    1. O delimitador é **ponto-e-vírgula (;)**.
+                                                    2. O arquivo está em um formato CSV *válido* (sem quebras de linha inesperadas nos dados).
+                                                """)
+                                                df_temp = None
                                         
                     elif file_name.endswith('.xlsx'):
                         df_temp = pd.read_excel(uploaded_file_stream)
@@ -409,7 +424,6 @@ with st.sidebar:
                 st.markdown("---")
                 
                 # O DataFrame precisa ser processado aqui para ter os tipos corretos para a seleção de filtros
-                # ESTA CHAMADA USA O UTILS.PY CORRIGIDO E FAZ A LIMPEZA NUMÉRICA
                 df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
                 
                 # Colunas de filtro são as categóricas (object ou category)
