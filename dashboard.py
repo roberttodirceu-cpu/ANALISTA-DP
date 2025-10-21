@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Limpeza Agressiva de Colunas
+# app.py - Versão FINAL com Ajuste de Layout do Filtro de Data
 
 import streamlit as st
 import pandas as pd
@@ -185,14 +185,15 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
             data_min_df = data_series_full.min()
             data_max_df = data_series_full.max()
             
+            # Garante que os valores de data_range são objetos datetime.date ou datetime.datetime
             data_range_start = pd.to_datetime(data_range[0])
             data_range_end = pd.to_datetime(data_range[1])
 
             # Aplica filtro de data APENAS se o intervalo selecionado for diferente do intervalo total do DF
-            if data_range_start > data_min_df or data_range_end < data_max_df:
+            if data_range_start.date() > data_min_df.date() or data_range_end.date() < data_max_df.date():
                 df_filtrado_temp = df_filtrado_temp[
-                    (df_filtrado_temp[col_data_padrao] >= data_range_start) &
-                    (df_filtrado_temp[col_data_padrao] <= data_range_end)
+                    (df_filtrado_temp[col_data_padrao].dt.date >= data_range_start.date()) &
+                    (df_filtrado_temp[col_data_padrao].dt.date <= data_range_end.date())
                 ]
         return df_filtrado_temp
     
@@ -625,42 +626,77 @@ else:
         current_active_filters_dict = {}
         data_range = None
         df_base_temp = df_analise_base.copy()
+        col_data_padrao = colunas_data[0] if colunas_data else None
+
         
         with tab_container:
             
-            # Ajuste solicitado: Envolver o filtro de data em um st.expander
-            if colunas_data:
-                col_data_padrao = colunas_data[0]
+            # Ajuste solicitado: Usar st.date_input dentro do expander para layout compacto
+            if colunas_data and col_data_padrao in df_analise_base.columns:
+                
                 df_col_data = df_analise_base[col_data_padrao].dropna()
                 
                 if not df_col_data.empty:
                     data_series = pd.to_datetime(df_col_data, errors='coerce').dropna()
                     
                     if not data_series.empty:
-                        data_min_df = data_series.min()
-                        data_max_df = data_series.max()
+                        data_min_df = data_series.min().date() # Usar date() para compatibilidade com st.date_input
+                        data_max_df = data_series.max().date()
                         
                         if pd.notna(data_min_df) and pd.notna(data_max_df):
                             data_range_key = f'date_range_key_{suffix}_{col_data_padrao}'
-                            initial_default_range = (data_min_df.to_pydatetime(), data_max_df.to_pydatetime())
+                            
+                            # Valores padrão no formato date
+                            initial_default_range = (data_min_df, data_max_df)
+                            
                             if data_range_key not in st.session_state: 
                                 st.session_state[data_range_key] = initial_default_range
                             
                             current_value = st.session_state[data_range_key]
                             
-                            # START: APLICANDO st.expander para o filtro de data
-                            with st.expander(f"Data - {col_data_padrao.replace('_', ' ').title()}", expanded=True):
-                                data_range = st.slider(f"Intervalo de Data", 
-                                                         min_value=data_min_df.to_pydatetime(), max_value=data_max_df.to_pydatetime(), 
-                                                         value=current_value, format="YYYY/MM/DD", key=data_range_key, label_visibility="collapsed")
-                            # END: APLICANDO st.expander para o filtro de data
+                            # Rótulo para o Expander
+                            data_range_start = current_value[0].strftime('%Y-%m-%d')
+                            data_range_end = current_value[1].strftime('%Y-%m-%d')
+                            rotulo_expander_data = f"Data - {col_data_padrao.replace('_', ' ').title()} ({data_range_start} a {data_range_end})"
                             
-                            if data_range[0] > data_min_df.to_pydatetime() or data_range[1] < data_max_df.to_pydatetime():
+                            if current_value == initial_default_range:
+                                rotulo_expander_data = f"Data - {col_data_padrao.replace('_', ' ').title()} (TOTAL)"
+
+                            # START: APLICANDO st.expander E st.date_input
+                            with st.expander(rotulo_expander_data):
+                                
+                                st.markdown("Selecione o Intervalo de Datas:")
+                                
+                                # Usamos st.date_input para obter um layout mais parecido com um select
+                                selected_dates = st.date_input(
+                                    label="Intervalo de Data", 
+                                    min_value=data_min_df, 
+                                    max_value=data_max_df, 
+                                    value=current_value, 
+                                    key=data_range_key, 
+                                    label_visibility="collapsed"
+                                )
+                                
+                                # Garante que a seleção tenha 2 datas e que a ordem esteja correta
+                                if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
+                                    data_range = (min(selected_dates), max(selected_dates))
+                                    st.session_state[data_range_key] = data_range
+                                elif isinstance(selected_dates, list) and len(selected_dates) == 2:
+                                    data_range = (min(selected_dates), max(selected_dates))
+                                    st.session_state[data_range_key] = data_range
+                                else:
+                                    # Fallback ou se apenas uma data foi selecionada (raro com value=tuple)
+                                    data_range = initial_default_range
+
+                            # END: APLICANDO st.expander E st.date_input
+
+                            # A série original continua sendo usada para o filtro
+                            if data_range[0] > data_min_df or data_range[1] < data_max_df:
                                 df_base_temp[col_data_padrao] = pd.to_datetime(df_base_temp[col_data_padrao], errors='coerce')
-    # O restante da função 'render_filter_panel' (filtros categóricos) continuará a partir daqui no código original, garantindo que o layout seja mantido.
-    # Como o código foi cortado no final da função original, vou completá-lo para que o script seja executável.
-    
+                            
+
             st.markdown("##### Filtros Categóricos")
+            # Filtra apenas colunas categóricas que não são a coluna de data
             cols_category = [col for col in colunas_filtro_a_exibir if col != col_data_padrao if col in df_base_temp.columns]
             
             if cols_category:
@@ -716,10 +752,9 @@ else:
             # Armazenar filtros ativos no estado de sessão
             if suffix == 'base':
                 st.session_state.active_filters_base = current_active_filters_dict
-                data_range_base = data_range
+                # O retorno de data_range é feito aqui para uso externo (aplicar_filtros_comparacao)
             else:
                 st.session_state.active_filters_comp = current_active_filters_dict
-                data_range_comp = data_range
                 
             return current_active_filters_dict, data_range
 
