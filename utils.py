@@ -1,142 +1,87 @@
 import pandas as pd
 import numpy as np
-from datetime import datetime
+import locale
 
-# --- 1. Funções de Formatação e Auxílio ---
+# --- Configuração de Locale para Moeda (necessário para formatar_moeda) ---
+# Tenta configurar o locale para Português do Brasil, necessário para formatar_moeda
+try:
+    locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+except locale.Error:
+    try:
+        # Tenta a alternativa comum no Windows
+        locale.setlocale(locale.LC_ALL, 'Portuguese_Brazil.1252')
+    except locale.Error:
+        # Define um fallback, mas a formatação de moeda pode não ser a ideal
+        print("Aviso: Não foi possível configurar o locale 'pt_BR.UTF-8' ou 'Portuguese_Brazil.1252'.")
+        pass
+
 
 def formatar_moeda(valor):
-    """
-    Formata um valor numérico para o padrão de moeda (BRL)
-    com separador de milhar e duas casas decimais.
-    Retorna 'R$ 0,00' se o valor for nulo (NaN).
-    """
-    if pd.isna(valor):
+    """Formata um valor numérico para o padrão monetário brasileiro (R$)."""
+    if pd.isna(valor) or not np.isfinite(valor):
         return "R$ 0,00"
-    
-    # Converte para float, formata para string e substitui os separadores
-    # Usa 'X' temporariamente para evitar conflito na troca de ponto por vírgula
-    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    try:
+        # Usa o locale configurado
+        return locale.currency(valor, symbol='R$', grouping=True)
+    except Exception:
+        # Fallback manual em caso de falha de locale
+        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def inferir_e_converter_tipos(df, colunas_texto_id, colunas_moeda):
+    """
+    Infernize os tipos de dados do DataFrame, convertendo colunas numéricas
+    e garantindo que colunas de filtro sejam categóricas.
+    """
+    df_temp = df.copy()
+
+    # 1. Converter Colunas de Moeda
+    for col in colunas_moeda:
+        if col in df_temp.columns:
+            # Tenta converter para string, substitui vírgula por ponto, e converte para float
+            df_temp[col] = df_temp[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+            df_temp[col] = pd.to_numeric(df_temp[col], errors='coerce')
+            df_temp[col] = df_temp[col].fillna(0).astype(float) # Zera NaNs após conversão
+
+    # 2. Converter Colunas de Texto/ID para string e depois para Categoria
+    for col in colunas_texto_id:
+        if col in df_temp.columns:
+            df_temp[col] = df_temp[col].astype(str).str.strip()
+            df_temp[col] = df_temp[col].astype('category')
+
+    # 3. Inferência Geral e Conversão de Categóricos
+    for col in df_temp.columns:
+        # Colunas com poucos valores únicos (e que não são data, float ou int) viram 'category'
+        if df_temp[col].dtype == 'object' or (df_temp[col].nunique() / len(df_temp) < 0.1 and df_temp[col].nunique() < 50 and df_temp[col].dtype != 'datetime64[ns]'):
+            try:
+                # Tenta conversão forçada para categoria para otimizar memória/filtros
+                if df_temp[col].dtype != 'category':
+                    df_temp[col] = df_temp[col].astype(str).astype('category')
+            except:
+                pass # Ignora se falhar
+                
+    # 4. Ajuste Específico para MES/ANO: Devem ser categóricos/string para filtros
+    for col in ['mes', 'ano']:
+        if col in df_temp.columns:
+            df_temp[col] = df_temp[col].astype(str).astype('category')
+
+
+    return df_temp
 
 
 def encontrar_colunas_tipos(df):
-    """
-    Identifica as colunas de Data e as demais (numéricas/categóricas).
-    """
-    colunas_data = []
-    outras_colunas = []
-    
-    for col in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
-            colunas_data.append(col)
-        else:
-            outras_colunas.append(col)
-            
-    return outras_colunas, colunas_data
+    """Identifica colunas numéricas e de data."""
+    colunas_numericas = df.select_dtypes(include=np.number).columns.tolist()
+    colunas_data = df.select_dtypes(include=['datetime64[ns]']).columns.tolist()
+    return colunas_numericas, colunas_data
 
 
-def verificar_ausentes(df, colunas):
-    """
-    Verifica e retorna um dicionário com a contagem de valores ausentes (NaN ou strings vazias)
-    por coluna, apenas para as colunas listadas. 
-    A correção garante que a verificação é robusta para strings vazias.
-    """
+def verificar_ausentes(df, colunas_filtro):
+    """Retorna um dicionário de colunas de filtro que contêm valores ausentes (NaN/None)."""
     ausentes = {}
-    total_linhas = len(df)
-    
-    # Itera apenas sobre as colunas que foram selecionadas para filtro
-    for col in colunas:
+    for col in colunas_filtro:
         if col in df.columns:
-            # Conta o número de NaNs (inclui NaT para datas)
-            n_nan = df[col].isnull().sum()
-            
-            # Conta o número de strings vazias ou apenas espaços
-            n_vazio = 0
-            if df[col].dtype == 'object' or pd.api.types.is_categorical_dtype(df[col]):
-                 n_vazio = (df[col].astype(str).str.strip() == '').sum()
-            
-            n_ausentes = n_nan + n_vazio
-            
-            if n_ausentes > 0:
-                ausentes[col] = (n_ausentes, total_linhas)
-                
+            nan_count = df[col].isnull().sum()
+            if nan_count > 0:
+                ausentes[col] = (nan_count, len(df))
     return ausentes
-
-# --- 2. Função Principal de Conversão de Tipos ---
-
-def inferir_e_converter_tipos(df, colunas_texto, colunas_moeda):
-    """
-    Processa um DataFrame, convertendo tipos de dados com base nas seleções.
-    
-    Args:
-        df (pd.DataFrame): DataFrame a ser processado.
-        colunas_texto (list): Colunas a serem forçadas como string.
-        colunas_moeda (list): Colunas a serem forçadas como numéricas (float).
-
-    Returns:
-        pd.DataFrame: DataFrame com tipos de dados convertidos.
-    """
-    df_copy = df.copy()
-    
-    # 1. Limpeza de Nomes de Coluna
-    df_copy.columns = df_copy.columns.str.strip().str.lower().str.replace('[^a-z0-9_]', '', regex=True)
-    
-    # 2. Conversão de Colunas de TEXTO/ID (selecionadas pelo usuário)
-    for col in colunas_texto:
-        if col in df_copy.columns:
-            # Força para string, substitui nulos por 'N/A' e converte para categoria
-            df_copy[col] = df_copy[col].astype(str).fillna('N/A').str.strip().astype('category')
-    
-    # 3. Conversão de Colunas de MOEDA (selecionadas pelo usuário)
-    for col in colunas_moeda:
-        if col in df_copy.columns:
-            try:
-                # Trata strings de moeda e converte para float
-                if df_copy[col].dtype == 'object':
-                    # Remove R$, ponto de milhar e substitui vírgula por ponto
-                    df_copy[col] = (df_copy[col]
-                                    .astype(str)
-                                    .str.replace(r'[R$]', '', regex=True)
-                                    .str.replace('.', '', regex=False)
-                                    .str.replace(',', '.', regex=False)
-                                    .str.strip()
-                                    .replace('', np.nan)) # Trata string vazia como NaN
-                
-                df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce').astype(float)
-            except Exception:
-                # Se falhar, mantém a coluna original
-                pass 
-                
-    # 4. Inferência Automática para as Colunas Restantes
-    for col in df_copy.columns:
-        if col not in colunas_texto and col not in colunas_moeda:
-            # Tenta converter para data
-            try:
-                df_temp = pd.to_datetime(df_copy[col], errors='coerce')
-                # Se houver mais que 50% de valores válidos de data, converte
-                if df_temp.notna().sum() / len(df_temp) > 0.5:
-                    df_copy[col] = df_temp
-                    continue
-            except:
-                pass
-
-            # Tenta converter para numérico (int ou float)
-            try:
-                if pd.api.types.is_numeric_dtype(df_copy[col]):
-                    continue
-                
-                df_temp = pd.to_numeric(df_copy[col], errors='coerce')
-                # Se houver mais que 50% de valores válidos numéricos, converte
-                if df_temp.notna().sum() / len(df_temp) > 0.5:
-                    df_copy[col] = df_temp
-                    continue
-            except:
-                pass
-
-            # Converte o restante para categórico (ideal para filtros)
-            if df_copy[col].dtype == 'object' and df_copy[col].nunique() < 50:
-                df_copy[col] = df_copy[col].astype(str).fillna('N/A').str.strip().astype('category')
-            elif df_copy[col].dtype == 'object':
-                # Se muitos valores únicos, mantém como string/object
-                 df_copy[col] = df_copy[col].astype(str).fillna('N/A').str.strip()
-
-    return df_copy
