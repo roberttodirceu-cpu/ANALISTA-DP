@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Ajuste de Layout do Filtro de Data
+# app.py - Versão FINAL com Ajuste: ANO e MES como Filtros Categóricos
 
 import streamlit as st
 import pandas as pd
@@ -160,12 +160,12 @@ if 'cols_to_exclude_analysis' not in st.session_state:
 
 # --- Aplicação de Filtros (Função Caching) ---
 @st.cache_data(show_spinner="Aplicando filtros de Base e Comparação...")
-def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtros_ativos_comp, col_data, data_range_base, data_range_comp, trigger):
+def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtros_ativos_comp, col_data, trigger):
     
-    def _aplicar_filtro_single(df, col_filtros_list, filtros_ativos_dict, col_data, data_range):
+    def _aplicar_filtro_single(df, col_filtros_list, filtros_ativos_dict):
         df_filtrado_temp = df.copy()
         
-        # 1. Filtros Categóricos
+        # 1. Filtros Categóricos (incluindo ano e mês)
         for col in col_filtros_list:
             selecao = filtros_ativos_dict.get(col)
             if col not in df_filtrado_temp.columns: continue
@@ -174,38 +174,21 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
             
             # Aplica filtro SOMENTE se a seleção não estiver vazia E não for total
             if selecao and len(selecao) > 0 and len(selecao) < len(opcoes_unicas): 
+                # Converte a coluna para string para garantir a comparação
                 df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
         
-        # 2. Filtro de Data
-        if data_range and len(data_range) == 2 and col_data and col_data[0] in df_filtrado_temp.columns:
-            col_data_padrao = col_data[0]
-            df_filtrado_temp[col_data_padrao] = pd.to_datetime(df_filtrado_temp[col_data_padrao], errors='coerce')
-            
-            data_series_full = df_base[col_data_padrao].dropna()
-            data_min_df = data_series_full.min()
-            data_max_df = data_series_full.max()
-            
-            # Garante que os valores de data_range são objetos datetime.date ou datetime.datetime
-            data_range_start = pd.to_datetime(data_range[0])
-            data_range_end = pd.to_datetime(data_range[1])
-
-            # Aplica filtro de data APENAS se o intervalo selecionado for diferente do intervalo total do DF
-            if data_range_start.date() > data_min_df.date() or data_range_end.date() < data_max_df.date():
-                df_filtrado_temp = df_filtrado_temp[
-                    (df_filtrado_temp[col_data_padrao].dt.date >= data_range_start.date()) &
-                    (df_filtrado_temp[col_data_padrao].dt.date <= data_range_end.date())
-                ]
+        # O filtro de data referencial é feito implicitamente pelos filtros de 'ano' e 'mes'
         return df_filtrado_temp
     
-    df_base_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_base, col_data, data_range_base)
-    df_comp_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_comp, col_data, data_range_comp)
+    df_base_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_base)
+    df_comp_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_comp)
     
     return df_base_filtrado, df_comp_filtrado
 
 
 # --- FUNÇÃO PARA TABELA DE RESUMO E MÉTRICAS "EXPERT" ---
 
-def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, filtros_ativos_comp, colunas_data, data_range_base, data_range_comp):
+def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, filtros_ativos_comp, colunas_data):
     
     colunas_valor_salvas = st.session_state.colunas_valor_salvas
     
@@ -214,8 +197,10 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     # -------------------------------------------------------------
     st.markdown("#### 📝 Contexto do Filtro Ativo")
     
-    rotulo_base = gerar_rotulo_filtro(df_completo, filtros_ativos_base, colunas_data, data_range_base)
-    rotulo_comp = gerar_rotulo_filtro(df_completo, filtros_ativos_comp, colunas_data, data_range_comp)
+    # OBS: data_range_base/comp e colunas_data não são mais usados no filtro real, 
+    # mas a função gerar_rotulo_filtro precisa de argumentos para funcionar
+    rotulo_base = gerar_rotulo_filtro(df_completo, filtros_ativos_base, colunas_data, None)
+    rotulo_comp = gerar_rotulo_filtro(df_completo, filtros_ativos_comp, colunas_data, None)
 
     st.markdown(f"""
         <div style="padding: 10px; border: 1px solid #007bff; border-radius: 5px; margin-bottom: 15px; background-color: #e9f7ff;">
@@ -527,7 +512,6 @@ with st.sidebar:
                 
                 if target_col not in colunas_disponiveis:
                     # Se a limpeza agressiva não funcionou, procuramos pela coluna original ('NOME FUNCIONARIO')
-                    # antes da limpeza, ou por qualquer coluna que contenha 'nome' e 'func'
                     employee_col_candidates = [col for col in colunas_disponiveis if 'nome' in col and 'func' in col]
 
                     if employee_col_candidates:
@@ -545,17 +529,20 @@ with st.sidebar:
                 moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
                 if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', moeda_default)
                 
-                # Garante que 'nome_funcionario' está na lista de texto para ser processada corretamente
-                texto_default = [col for col in colunas_disponiveis if col in ['nr_func', 'nome_funcionario', 'emp', 'eve', 'seq', 't', 'tip', 'descricao_evento', 'tipo_processo']]
+                # Garante que 'nome_funcionario', 'ano' e 'mes' estão na lista de texto/filtro
+                texto_default = [col for col in colunas_disponiveis if col in ['nr_func', 'nome_funcionario', 'emp', 'eve', 'seq', 't', 'tip', 'descricao_evento', 'tipo_processo', 'ano', 'mes']]
                 
                 if 'texto_select' not in st.session_state: 
                     initialize_widget_state('texto_select', texto_default)
                 else:
-                    if 'nome_funcionario' in colunas_disponiveis:
-                         current_list = st.session_state.texto_select
-                         if 'nome_funcionario' not in current_list:
-                            current_list.append('nome_funcionario')
-                         st.session_state.texto_select = list(set(current_list)) 
+                    current_list = st.session_state.texto_select
+                    if 'nome_funcionario' in colunas_disponiveis and 'nome_funcionario' not in current_list:
+                        current_list.append('nome_funcionario')
+                    if 'ano' in colunas_disponiveis and 'ano' not in current_list:
+                        current_list.append('ano')
+                    if 'mes' in colunas_disponiveis and 'mes' not in current_list:
+                        current_list.append('mes')
+                    st.session_state.texto_select = list(set(current_list)) 
 
                 
                 st.markdown("##### 💰 Colunas de VALOR (R$)")
@@ -624,87 +611,34 @@ else:
     def render_filter_panel(tab_container, suffix, colunas_filtro_a_exibir, df_analise_base):
         
         current_active_filters_dict = {}
-        data_range = None
         df_base_temp = df_analise_base.copy()
-        col_data_padrao = colunas_data[0] if colunas_data else None
-
         
         with tab_container:
             
-            # Ajuste solicitado: Usar st.date_input dentro do expander para layout compacto
-            if colunas_data and col_data_padrao in df_analise_base.columns:
-                
-                df_col_data = df_analise_base[col_data_padrao].dropna()
-                
-                if not df_col_data.empty:
-                    data_series = pd.to_datetime(df_col_data, errors='coerce').dropna()
-                    
-                    if not data_series.empty:
-                        data_min_df = data_series.min().date() # Usar date() para compatibilidade com st.date_input
-                        data_max_df = data_series.max().date()
-                        
-                        if pd.notna(data_min_df) and pd.notna(data_max_df):
-                            data_range_key = f'date_range_key_{suffix}_{col_data_padrao}'
-                            
-                            # Valores padrão no formato date
-                            initial_default_range = (data_min_df, data_max_df)
-                            
-                            if data_range_key not in st.session_state: 
-                                st.session_state[data_range_key] = initial_default_range
-                            
-                            current_value = st.session_state[data_range_key]
-                            
-                            # Rótulo para o Expander
-                            data_range_start = current_value[0].strftime('%Y-%m-%d')
-                            data_range_end = current_value[1].strftime('%Y-%m-%d')
-                            rotulo_expander_data = f"Data - {col_data_padrao.replace('_', ' ').title()} ({data_range_start} a {data_range_end})"
-                            
-                            if current_value == initial_default_range:
-                                rotulo_expander_data = f"Data - {col_data_padrao.replace('_', ' ').title()} (TOTAL)"
-
-                            # START: APLICANDO st.expander E st.date_input
-                            with st.expander(rotulo_expander_data):
-                                
-                                st.markdown("Selecione o Intervalo de Datas:")
-                                
-                                # Usamos st.date_input para obter um layout mais parecido com um select
-                                selected_dates = st.date_input(
-                                    label="Intervalo de Data", 
-                                    min_value=data_min_df, 
-                                    max_value=data_max_df, 
-                                    value=current_value, 
-                                    key=data_range_key, 
-                                    label_visibility="collapsed"
-                                )
-                                
-                                # Garante que a seleção tenha 2 datas e que a ordem esteja correta
-                                if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
-                                    data_range = (min(selected_dates), max(selected_dates))
-                                    st.session_state[data_range_key] = data_range
-                                elif isinstance(selected_dates, list) and len(selected_dates) == 2:
-                                    data_range = (min(selected_dates), max(selected_dates))
-                                    st.session_state[data_range_key] = data_range
-                                else:
-                                    # Fallback ou se apenas uma data foi selecionada (raro com value=tuple)
-                                    data_range = initial_default_range
-
-                            # END: APLICANDO st.expander E st.date_input
-
-                            # A série original continua sendo usada para o filtro
-                            if data_range[0] > data_min_df or data_range[1] < data_max_df:
-                                df_base_temp[col_data_padrao] = pd.to_datetime(df_base_temp[col_data_padrao], errors='coerce')
-                            
-
-            st.markdown("##### Filtros Categóricos")
-            # Filtra apenas colunas categóricas que não são a coluna de data
-            cols_category = [col for col in colunas_filtro_a_exibir if col != col_data_padrao if col in df_base_temp.columns]
+            st.markdown("##### Filtros Categóricos (Incluindo Ano/Mês)")
             
-            if cols_category:
+            # Colunas de data (Ano/Mês) devem ser tratadas como filtros categóricos normais.
+            # Se a coluna 'data_referencia' existir, ela é ignorada para filtragem manual.
+            
+            cols_category_to_display = [col for col in colunas_filtro_a_exibir if col in df_base_temp.columns]
+            
+            # Prioriza ano e mês no topo da lista se existirem
+            sorted_cols = []
+            if 'ano' in cols_category_to_display:
+                sorted_cols.append('ano')
+                cols_category_to_display.remove('ano')
+            if 'mes' in cols_category_to_display:
+                sorted_cols.append('mes')
+                cols_category_to_display.remove('mes')
+                
+            sorted_cols.extend(cols_category_to_display)
+            
+            if sorted_cols:
                 
                 cols = st.columns(3)
                 col_index = 0
                 
-                for col in cols_category:
+                for col in sorted_cols:
                     
                     if col not in df_base_temp.columns: continue
                     
@@ -729,6 +663,7 @@ else:
                         rotulo_expander += " - INATIVO"
                     
                     with cols[col_index % 3]:
+                        # O expander encapsula o filtro, garantindo o layout de lista
                         with st.expander(rotulo_expander):
                             
                             # Botões de atalho (callback functions)
@@ -752,28 +687,27 @@ else:
             # Armazenar filtros ativos no estado de sessão
             if suffix == 'base':
                 st.session_state.active_filters_base = current_active_filters_dict
-                # O retorno de data_range é feito aqui para uso externo (aplicar_filtros_comparacao)
             else:
                 st.session_state.active_filters_comp = current_active_filters_dict
                 
-            return current_active_filters_dict, data_range
+            # Retorna None para o data_range, pois ele foi substituído pelos filtros categóricos
+            return current_active_filters_dict, None
 
     
     # Execução e Aplicação de Filtros
     
-    # 1. Obter Data Range e Filtros Categóricos
-    filtros_base, data_range_base = render_filter_panel(tab_base, 'base', colunas_categoricas_filtro, df_analise_completo)
-    filtros_comp, data_range_comp = render_filter_panel(tab_comparacao, 'comp', colunas_categoricas_filtro, df_analise_completo)
+    # 1. Obter Filtros Categóricos (Ano e Mês agora estão aqui)
+    filtros_base, _ = render_filter_panel(tab_base, 'base', colunas_categoricas_filtro, df_analise_completo)
+    filtros_comp, _ = render_filter_panel(tab_comparacao, 'comp', colunas_categoricas_filtro, df_analise_completo)
     
     # 2. Aplicação do filtro (função cacheada)
+    # A função foi alterada para não usar data_range
     df_filtrado_base, df_filtrado_comp = aplicar_filtros_comparacao(
         df_analise_completo, 
         colunas_categoricas_filtro, 
         filtros_base, 
         filtros_comp, 
-        colunas_data, 
-        data_range_base, 
-        data_range_comp,
+        colunas_data, # Não usado, mas mantido para compatibilidade de argumentos com a definição
         st.session_state['filtro_reset_trigger']
     )
     
@@ -783,15 +717,14 @@ else:
     st.markdown("---")
     
     # 3. Geração da Análise
+    # A função foi alterada para não usar data_range
     gerar_analise_expert(
         df_analise_completo, 
         df_filtrado_base, 
         df_filtrado_comp, 
         filtros_base, 
         filtros_comp, 
-        colunas_data, 
-        data_range_base, 
-        data_range_comp
+        colunas_data
     )
 
 
