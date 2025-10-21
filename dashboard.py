@@ -1,4 +1,4 @@
-# app.py - Versão com Persistência e Navegação por Botões de Dataset
+# app.py - Versão Final com Persistência, Navegação por Botões e Flexibilidade de Métrica
 
 import streamlit as st
 import pandas as pd
@@ -98,6 +98,9 @@ def switch_dataset(dataset_name):
         st.session_state.colunas_valor_salvas = data['colunas_valor_salvas']
         st.session_state.current_dataset_name = dataset_name # Atualiza o nome do dataset ativo
         
+        # Carrega o tipo de métrica principal do catálogo
+        st.session_state.main_metric_type = data.get('main_metric_type', 'VALUE')
+        
         default_exclude = [col for col in data['df'].columns if col in ['emp', 'eve', 'seq', 'nr_func']]
         st.session_state.cols_to_exclude_analysis = default_exclude
         
@@ -134,7 +137,7 @@ def get_clean_dataset_name(original_file_names, existing_names, user_input_name)
     return clean_name
 
 
-def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name, original_file_names):
+def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name, original_file_names, main_metric_type):
     """
     Salva o novo DataFrame processado no catálogo e o define como ativo.
     """
@@ -149,6 +152,7 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name
         'df': df_novo,
         'colunas_filtros_salvas': colunas_filtros,
         'colunas_valor_salvas': colunas_valor,
+        'main_metric_type': main_metric_type, # SALVA A NOVA VARIÁVEL
     }
     
     save_catalog(st.session_state.data_sets_catalog)
@@ -157,6 +161,7 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name
     st.session_state.colunas_filtros_salvas = colunas_filtros
     st.session_state.colunas_valor_salvas = colunas_valor
     st.session_state.current_dataset_name = base_name # Define o novo dataset como ativo
+    st.session_state.main_metric_type = main_metric_type # Define o tipo de métrica para a sessão
     
     default_exclude = [col for col in df_novo.columns if col in ['emp', 'eve', 'seq', 'nr_func']]
     st.session_state.cols_to_exclude_analysis = default_exclude
@@ -176,6 +181,7 @@ initial_df = pd.DataFrame()
 initial_filters = []
 initial_values = []
 initial_name = ""
+initial_metric_type = 'VALUE'
 
 # Lógica para carregar o estado inicial (último dataset usado ou o primeiro do catálogo)
 if st.session_state.data_sets_catalog:
@@ -190,12 +196,14 @@ if st.session_state.data_sets_catalog:
     initial_df = data['df']
     initial_filters = data['colunas_filtros_salvas']
     initial_values = data['colunas_valor_salvas']
+    initial_metric_type = data.get('main_metric_type', 'VALUE')
 
 
 if 'dados_atuais' not in st.session_state: st.session_state.dados_atuais = initial_df
 if 'colunas_filtros_salvas' not in st.session_state: st.session_state.colunas_filtros_salvas = initial_filters
 if 'colunas_valor_salvas' not in st.session_state: st.session_state.colunas_valor_salvas = initial_values
 if 'current_dataset_name' not in st.session_state: st.session_state.current_dataset_name = initial_name
+if 'main_metric_type' not in st.session_state: st.session_state.main_metric_type = initial_metric_type
     
 if 'uploaded_files_data' not in st.session_state: st.session_state.uploaded_files_data = {} 
 if 'df_filtrado_base' not in st.session_state: st.session_state.df_filtrado_base = initial_df.copy()
@@ -210,7 +218,7 @@ if 'cols_to_exclude_analysis' not in st.session_state:
 # --- Aplicação de Filtros (Função Caching) ---
 @st.cache_data(show_spinner="Aplicando filtros de Base e Comparação...")
 def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtros_ativos_comp, col_data, trigger):
-    # ESTA FUNÇÃO PERMANECE INTACTA EM SUA LÓGICA DE FILTRAGEM
+    
     def _aplicar_filtro_single(df, col_filtros_list, filtros_ativos_dict):
         df_filtrado_temp = df.copy()
         
@@ -237,7 +245,6 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
 # --- FUNÇÃO PARA TABELA DE RESUMO E MÉTRICAS "EXPERT" ---
 
 def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, filtros_ativos_comp, colunas_data):
-    # ESTA FUNÇÃO PERMANECE INTACTA
     
     colunas_valor_salvas = st.session_state.colunas_valor_salvas
     
@@ -264,43 +271,49 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     # 2. CALCULO DE VENCIMENTOS E DESCONTOS E FUNCIONÁRIOS ÚNICOS
     # -------------------------------------------------------------
     
+    # Colunas coringas de cálculo (usadas para o modo VALUE)
     col_tipo_evento = 't' 
     col_valor = 'valor' 
     col_func = 'nome_funcionario' # Chave para Funcionário Único
     
-    if col_tipo_evento not in df_completo.columns or col_valor not in df_completo.columns:
-        st.error(f"Erro de Análise: Colunas '{col_tipo_evento}' ou '{col_valor}' não encontradas no DataFrame. Verifique a configuração de colunas.")
-        return
+    # Verifica o modo de análise
+    is_value_mode = st.session_state.main_metric_type == 'VALUE'
+
+    # Se estiver no modo 'VALUE', verifica se as colunas críticas existem
+    if is_value_mode and (col_tipo_evento not in df_completo.columns or col_valor not in df_completo.columns):
+        st.warning(f"⚠️ Aviso: O modo 'Valor Monetário' está ativo, mas as colunas críticas '{col_tipo_evento}' ou '{col_valor}' não foram encontradas no Dataset. Alternando para o modo 'Contagem'.")
+        is_value_mode = False
         
+    # Coluna do funcionário é crítica para ambos os modos
     if col_func not in df_completo.columns:
-        st.error(f"Erro Crítico: A coluna '{col_func}' não foi encontrada no DataFrame. Colunas atuais: {df_completo.columns.tolist()}")
+        st.error(f"Erro Crítico: A coluna '{col_func}' (nome_funcionario) não foi encontrada no DataFrame. Por favor, reconfigure.")
         return
 
-    def calcular_venc_desc(df):
+    def calcular_venc_desc(df, is_value_mode_internal):
         if df.empty:
-            return 0, 0, 0, 0
+            return 0, 0, 0, 0 # Vencimentos, Descontos, Liquido, Contagem Func
             
-        df_clean = df.dropna(subset=[col_valor, col_tipo_evento])
-
-        vencimentos = df_clean[df_clean[col_tipo_evento] == 'C'][col_valor].sum()
-        descontos = df_clean[df_clean[col_tipo_evento] == 'D'][col_valor].sum()
-        liquido = vencimentos - descontos
-        
         func_count = df[col_func].astype(str).str.strip().replace('', np.nan).dropna().nunique()
+        
+        if not is_value_mode_internal:
+            # No modo COUNT, valores monetários são ZERO. O primeiro retorno é a contagem de registros.
+            return len(df), 0, 0, func_count 
+            
+        else:
+            # Modo VALUE
+            df_clean = df.dropna(subset=[col_valor, col_tipo_evento])
 
-        return vencimentos, descontos, liquido, func_count
+            vencimentos = df_clean[df_clean[col_tipo_evento] == 'C'][col_valor].sum()
+            descontos = df_clean[df_clean[col_tipo_evento] == 'D'][col_valor].sum()
+            liquido = vencimentos - descontos
+            
+            return vencimentos, descontos, liquido, func_count
 
-    venc_base, desc_base, liq_base, func_base = calcular_venc_desc(df_base)
-    venc_comp, desc_comp, liq_comp, func_comp = calcular_venc_desc(df_comp)
-    venc_total, desc_total, liq_total, func_total = calcular_venc_desc(df_completo)
+    venc_base, desc_base, liq_base, func_base = calcular_venc_desc(df_base, is_value_mode)
+    venc_comp, desc_comp, liq_comp, func_comp = calcular_venc_desc(df_comp, is_value_mode)
+    venc_total, desc_total, liq_total, func_total = calcular_venc_desc(df_completo, is_value_mode)
 
-
-    # -------------------------------------------------------------
-    # 3. APRESENTAÇÃO DOS KPIS DE VENCIMENTOS E DESCONTOS (CARDS)
-    # -------------------------------------------------------------
-    st.markdown("##### 💰 Resumo Financeiro da BASE (Referência)")
-    col1, col2, col3, col4 = st.columns(4)
-
+    # Função Helper para o Delta (permanece inalterada)
     def get_delta(comp, base, is_currency=True):
         diff = comp - base
         if base == 0:
@@ -313,33 +326,66 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         else:
             return f"{diff:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."), f" ({pct_diff:,.2f}%)" if np.isfinite(pct_diff) else " (N/A)"
 
-    delta_func_val, delta_func_pct = get_delta(func_comp, func_base, is_currency=False)
-    col1.metric(
-        label=f"Funcionários Únicos (Total: {func_total})", 
-        value=f"{func_base:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."), 
-        delta=f"{delta_func_val} {delta_func_pct}"
-    )
 
-    delta_venc_val, delta_venc_pct = get_delta(venc_comp, venc_base, is_currency=True)
-    col2.metric(
-        label=f"Total Vencimentos (Total: {formatar_moeda(venc_total)})", 
-        value=formatar_moeda(venc_base), 
-        delta=f"{delta_venc_val} {delta_venc_pct}"
-    )
-
-    delta_desc_val, delta_desc_pct = get_delta(desc_comp, desc_base, is_currency=True)
-    col3.metric(
-        label=f"Total Descontos (Total: {formatar_moeda(desc_total)})", 
-        value=formatar_moeda(desc_base), 
-        delta=f"{delta_desc_val} {delta_desc_pct}"
-    )
+    # -------------------------------------------------------------
+    # 3. APRESENTAÇÃO DOS KPIS (CARDS)
+    # -------------------------------------------------------------
     
-    delta_liq_val, delta_liq_pct = get_delta(liq_comp, liq_base, is_currency=True)
-    col4.metric(
-        label=f"Valor Líquido (Total: {formatar_moeda(liq_total)})", 
-        value=formatar_moeda(liq_base), 
-        delta=f"{delta_liq_val} {delta_liq_pct}"
-    )
+    if is_value_mode:
+        st.markdown("##### 💰 Resumo Financeiro da BASE (Referência)")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        delta_func_val, delta_func_pct = get_delta(func_comp, func_base, is_currency=False)
+        col1.metric(
+            label=f"Funcionários Únicos (Total: {func_total})", 
+            value=f"{func_base:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."), 
+            delta=f"{delta_func_val} {delta_func_pct}"
+        )
+
+        delta_venc_val, delta_venc_pct = get_delta(venc_comp, venc_base, is_currency=True)
+        col2.metric(
+            label=f"Total Vencimentos (Total: {formatar_moeda(venc_total)})", 
+            value=formatar_moeda(venc_base), 
+            delta=f"{delta_venc_val} {delta_venc_pct}"
+        )
+
+        delta_desc_val, delta_desc_pct = get_delta(desc_comp, desc_base, is_currency=True)
+        col3.metric(
+            label=f"Total Descontos (Total: {formatar_moeda(desc_total)})", 
+            value=formatar_moeda(desc_base), 
+            delta=f"{delta_desc_val} {delta_desc_pct}"
+        )
+        
+        delta_liq_val, delta_liq_pct = get_delta(liq_comp, liq_base, is_currency=True)
+        col4.metric(
+            label=f"Valor Líquido (Total: {formatar_moeda(liq_total)})", 
+            value=formatar_moeda(liq_base), 
+            delta=f"{delta_liq_val} {delta_liq_pct}"
+        )
+    
+    else: # Modo Contagem
+        st.markdown("##### 🔢 Resumo de Contagem da BASE (Referência)")
+        col1, col2 = st.columns(2)
+        
+        # O venc_base no modo COUNT contém o total de registros
+        total_regs_base = venc_base
+        total_regs_comp = venc_comp
+        total_regs_total = venc_total
+        
+        delta_func_val, delta_func_pct = get_delta(func_comp, func_base, is_currency=False)
+        col1.metric(
+            label=f"Funcionários Únicos (Total: {func_total})", 
+            value=f"{func_base:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."), 
+            delta=f"{delta_func_val} {delta_func_pct}"
+        )
+        
+        delta_reg_val, delta_reg_pct = get_delta(total_regs_comp, total_regs_base, is_currency=False)
+        col2.metric(
+            label=f"Contagem Total de Registros (Total: {total_regs_total:,.0f})", 
+            value=f"{total_regs_base:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."), 
+            delta=f"{delta_reg_val} {delta_reg_pct}"
+        )
+
 
     st.markdown("---")
 
@@ -350,19 +396,23 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
 
     dados_resumo = []
     
+    # Linhas de Contagem são sempre exibidas
     dados_resumo.append({'Métrica': 'CONT. DE REGISTROS', 'Total Geral': len(df_completo), 'Base (Filtrado)': len(df_base), 'Comparação (Filtrado)': len(df_comp), 'Tipo': 'Contagem'})
     dados_resumo.append({'Métrica': 'CONT. DE FUNCIONÁRIOS ÚNICOS', 'Total Geral': func_total, 'Base (Filtrado)': func_base, 'Comparação (Filtrado)': func_comp, 'Tipo': 'Contagem'})
-    dados_resumo.append({'Métrica': 'TOTAL DE VENCIMENTOS (CRÉDITO)', 'Total Geral': venc_total, 'Base (Filtrado)': venc_base, 'Comparação (Filtrado)': venc_comp, 'Tipo': 'Moeda'})
-    dados_resumo.append({'Métrica': 'TOTAL DE DESCONTOS (DÉBITO)', 'Total Geral': desc_total, 'Base (Filtrado)': desc_base, 'Comparação (Filtrado)': desc_comp, 'Tipo': 'Moeda'})
-    dados_resumo.append({'Métrica': 'VALOR LÍQUIDO (Venc - Desc)', 'Total Geral': liq_total, 'Base (Filtrado)': liq_base, 'Comparação (Filtrado)': liq_comp, 'Tipo': 'Moeda'})
+    
+    # Linhas de Valor só são exibidas no modo VALUE
+    if is_value_mode:
+        dados_resumo.append({'Métrica': 'TOTAL DE VENCIMENTOS (CRÉDITO)', 'Total Geral': venc_total, 'Base (Filtrado)': venc_base, 'Comparação (Filtrado)': venc_comp, 'Tipo': 'Moeda'})
+        dados_resumo.append({'Métrica': 'TOTAL DE DESCONTOS (DÉBITO)', 'Total Geral': desc_total, 'Base (Filtrado)': desc_base, 'Comparação (Filtrado)': desc_comp, 'Tipo': 'Moeda'})
+        dados_resumo.append({'Métrica': 'VALOR LÍQUIDO (Venc - Desc)', 'Total Geral': liq_total, 'Base (Filtrado)': liq_base, 'Comparação (Filtrado)': liq_comp, 'Tipo': 'Moeda'})
 
-    colunas_moeda_outras = [col for col in st.session_state.colunas_valor_salvas if col not in ['valor']] 
-    for col in colunas_moeda_outras:
-        total_geral_soma = df_completo[col].sum()
-        total_base_soma = df_base[col].sum()
-        total_comp_soma = df_comp[col].sum()
-        dados_resumo.append({'Métrica': f"SOMA: {col.upper().replace('_', ' ')}", 'Total Geral': total_geral_soma, 'Base (Filtrado)': total_base_soma, 'Comparação (Filtrado)': total_comp_soma, 'Tipo': 'Moeda'})
-            
+        colunas_moeda_outras = [col for col in st.session_state.colunas_valor_salvas if col not in ['valor']] 
+        for col in colunas_moeda_outras:
+            total_geral_soma = df_completo[col].sum()
+            total_base_soma = df_base[col].sum()
+            total_comp_soma = df_comp[col].sum()
+            dados_resumo.append({'Métrica': f"SOMA: {col.upper().replace('_', ' ')}", 'Total Geral': total_geral_soma, 'Base (Filtrado)': total_base_soma, 'Comparação (Filtrado)': total_comp_soma, 'Tipo': 'Moeda'})
+                
     df_resumo = pd.DataFrame(dados_resumo)
     
     def calcular_variacao(row):
@@ -441,7 +491,6 @@ with st.sidebar:
         st.info("Estado da sessão limpo! Recarregando...")
         st.rerun()
 
-    # REMOVIDA A SEÇÃO DE TROCA DE DATASET AQUI, SERÁ FEITA COM BOTÕES NO CORPO
             
     # Seção 2: Upload e Processamento
     st.header("1. Upload e Processamento")
@@ -519,7 +568,7 @@ with st.sidebar:
                 st.session_state.dados_atuais = pd.DataFrame() 
             else:
                 
-                # --- Limpeza de Colunas (sem alteração) ---
+                # --- Limpeza de Colunas (Limpeza agressiva) ---
                 raw_columns = df_novo.columns.copy()
                 cleaned_columns = (
                     raw_columns.astype(str)
@@ -533,15 +582,65 @@ with st.sidebar:
                 df_novo.columns = cleaned_columns
                 colunas_disponiveis = df_novo.columns.tolist()
 
-                target_col = 'nome_funcionario'
-                if target_col not in colunas_disponiveis:
-                    employee_col_candidates = [col for col in colunas_disponiveis if 'nome' in col and 'func' in col]
-                    if employee_col_candidates:
-                        original_candidate = employee_col_candidates[0]
-                        df_novo.rename(columns={original_candidate: target_col}, inplace=True)
+                # --- VERIFICAÇÃO E RENOMEAÇÃO CRÍTICA (NOME_FUNCIONARIO, T, VALOR) ---
+                
+                # 1. Renomeação de NOME_FUNCIONARIO
+                target_col_func = 'nome_funcionario'
+                if target_col_func not in colunas_disponiveis:
+                    func_candidates = [col for col in colunas_disponiveis if 'nome' in col and 'func' in col]
+                    if func_candidates:
+                        df_novo.rename(columns={func_candidates[0]: target_col_func}, inplace=True)
                         colunas_disponiveis = df_novo.columns.tolist() 
+                        st.sidebar.info(f"Col. de Funcionário renomeada para '{target_col_func}'.")
 
-                # --- Seleção de Tipos e Filtros (sem alteração) ---
+                # 2. Renomeação de T (Tipo de Evento: Crédito/Débito)
+                target_col_t = 't'
+                if target_col_t not in colunas_disponiveis:
+                    t_candidates = [col for col in colunas_disponiveis if 'tipo' in col and any(k in col for k in ['eve', 'mov', 'lan', 't'])]
+                    if t_candidates:
+                        df_novo.rename(columns={t_candidates[0]: target_col_t}, inplace=True)
+                        colunas_disponiveis = df_novo.columns.tolist()
+                        st.sidebar.info(f"Col. de Tipo de Evento renomeada para '{target_col_t}'.")
+                
+                # 3. Renomeação de VALOR (O Valor Monetário)
+                target_col_valor = 'valor'
+                if target_col_valor not in colunas_disponiveis:
+                    valor_candidates = [col for col in colunas_disponiveis if any(k in col for k in ['vlr', 'vl', 'montante', 'total']) and not any(k in col for k in ['base', 'liqui', 'bruto', 'horas', 'rateio'])]
+                    if valor_candidates:
+                        df_novo.rename(columns={valor_candidates[0]: target_col_valor}, inplace=True)
+                        colunas_disponiveis = df_novo.columns.tolist()
+                        st.sidebar.info(f"Col. de Valor renomeada para '{target_col_valor}'.")
+
+                # --- FIM DA VERIFICAÇÃO CRÍTICA ---
+
+
+                # --- NOVO: SELETOR DE MÉTRICA PRINCIPAL ---
+                st.markdown("---")
+                st.markdown("##### 🔑 Métrica Principal do Dashboard")
+                
+                # Definição do formato e index para o radio button
+                radio_options = ['Valor Monetário (Crédito/Débito)', 'Apenas Contagem de Registros']
+                current_radio_index = 0 if st.session_state.main_metric_type == 'VALUE' else 1
+                
+                selected_radio_text = st.radio(
+                    "Foco da Análise:",
+                    options=radio_options,
+                    index=current_radio_index,
+                    format_func=lambda x: x.split(" (")[0],
+                    key='radio_main_metric_sidebar'
+                )
+                
+                # Conversão do texto para o estado interno
+                if selected_radio_text == 'Apenas Contagem de Registros':
+                    st.session_state.main_metric_type = 'COUNT'
+                else:
+                    st.session_state.main_metric_type = 'VALUE'
+                
+                st.markdown("---")
+                # --- FIM NOVO SELETOR ---
+                
+                
+                # --- Seleção de Tipos e Filtros ---
                 st.info(f"Total de {len(df_novo)} linhas para configurar.")
                 
                 moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
@@ -585,13 +684,13 @@ with st.sidebar:
                     else:
                         dataset_name_to_save = st.session_state.get('current_dataset_name_input', default_dataset_name)
                         
-                        # AQUI ESTÁ A CHAVE: Passa a lista de nomes de arquivos para o processamento
                         sucesso, df_processado_salvo = processar_dados_atuais(
                             df_processado, 
                             colunas_para_filtro, 
                             colunas_valor_dashboard, 
                             dataset_name_to_save,
-                            uploaded_file_names
+                            uploaded_file_names,
+                            st.session_state.main_metric_type
                         )
                         if sucesso:
                             st.success(f"Dataset '{st.session_state.current_dataset_name}' processado e salvo no catálogo!")
@@ -623,7 +722,7 @@ else:
     dataset_names = list(st.session_state.data_sets_catalog.keys())
     
     if dataset_names:
-        # Cria uma coluna para cada dataset + 1 coluna extra no final para espaçamento
+        # Cria as colunas de botões
         cols = st.columns(len(dataset_names))
         
         for i, name in enumerate(dataset_names):
