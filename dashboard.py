@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Opção de Agregação Explícita, Concateção e Corrigido Erro de Leitura (v2.0 - skipinitialspace)
+# app.py - Versão FINAL com Opção de Agregação Explícita, Concateção e Corrigido Erro de Leitura (v3.0 - skiprows)
 
 import streamlit as st
 import pandas as pd
@@ -16,6 +16,8 @@ import unicodedata
 # ==============================================================================
 # Funções simuladas para garantir que o código rode mesmo sem o utils.py
 def formatar_moeda(valor): 
+    # Tenta lidar com NaN
+    if pd.isna(valor): return "R$ 0,00"
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def limpar_string(text):
@@ -26,6 +28,7 @@ def limpar_nome_coluna(col):
     if not isinstance(col, str): return str(col).lower()
     
     col = col.strip().lower()
+    # Remove acentos e caracteres especiais (e.g., \xa0)
     col = unicodedata.normalize('NFKD', col).encode('ascii', 'ignore').decode('utf-8')
     col = re.sub(r'[^a-z0-9]+', '_', col) 
     col = col.strip('_')
@@ -45,11 +48,12 @@ def inferir_e_converter_tipos(df, cols_texto, cols_valor):
         if col in df_clean.columns:
             # Limpeza robusta para colunas de valor
             try:
-                # Remove pontos (milhar) e substitui vírgulas (decimal) por ponto
+                # Converte para string e remove todos os caracteres que não sejam dígitos, vírgula ou ponto
                 df_clean[col] = df_clean[col].astype(str).str.replace(r'[^\d,\.-]', '', regex=True)
                 
                 # Tenta lidar com a notação brasileira (milhar=ponto, decimal=vírgula)
                 if df_clean[col].str.contains(r','):
+                    # Remove pontos (milhar) e substitui vírgulas (decimal) por ponto
                     df_clean[col] = df_clean[col].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
                 
                 # Coerce to numeric (erros se tornam NaN)
@@ -581,19 +585,21 @@ with st.sidebar:
                     uploaded_file_stream = BytesIO(file_bytes)
                     
                     if file_name.endswith('.csv'):
-                        # Tentativas de leitura de CSV (9 combinações + skipinitialspace=True)
+                        # Tentativas de leitura de CSV (10 combinações - A CRÍTICA AGORA USA skiprows=1)
                         reading_attempts = [
-                            {'sep': ';', 'decimal': ',', 'encoding': 'utf-8', 'header': 'infer', 'skipinitialspace': True},
-                            {'sep': ';', 'decimal': ',', 'encoding': 'latin-1', 'header': 'infer', 'skipinitialspace': True},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'header': 'infer', 'skipinitialspace': True},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'latin-1', 'header': 'infer', 'skipinitialspace': True},
-                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'header': 'infer', 'skipinitialspace': True},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'iso-8859-1', 'header': 'infer', 'skipinitialspace': True},
-                            # TENTATIVA FORÇADA: Ignora a primeira linha (header=1)
-                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'header': 1, 'skipinitialspace': True}, 
-                            # Tentativas adicionais
-                            {'sep': ';', 'decimal': '.', 'encoding': 'utf-8', 'header': 'infer', 'skipinitialspace': True}, # Ponto-e-vírgula com decimal PONTO
-                            {'sep': '\t', 'decimal': ',', 'encoding': 'utf-8', 'header': 'infer', 'skipinitialspace': True}, # TAB como separador (TSV)
+                            {'sep': ';', 'decimal': ',', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'},
+                            # Opções de skip row 1 para contornar lixo invisível, header=None para não procurar cabeçalho na linha 0
+                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': None, 'skiprows': 1},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': None, 'skiprows': 1},
+                            
+                            # Outras combinações normais (header='infer')
+                            {'sep': ';', 'decimal': ',', 'encoding': 'latin-1', 'skipinitialspace': True, 'header': 'infer'},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'latin-1', 'skipinitialspace': True, 'header': 'infer'},
+                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': 'infer'},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': 'infer'},
+                            {'sep': ';', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'}, # Ponto-e-vírgula com decimal PONTO
+                            {'sep': '\t', 'decimal': ',', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'}, # TAB como separador (TSV)
                         ]
                         
                         success = False
@@ -601,15 +607,28 @@ with st.sidebar:
                             try:
                                 uploaded_file_stream.seek(0)
                                 
-                                # Extrai o parâmetro de cabeçalho para tratamento especial
-                                header_param = attempt.pop('header') 
+                                # Extrai os parâmetros de cabeçalho e skiprows para tratamento especial
+                                header_param = attempt.pop('header', 'infer')
+                                skiprows_param = attempt.pop('skiprows', 0)
                                 
                                 # Tenta ler o CSV
-                                df_temp = pd.read_csv(uploaded_file_stream, **attempt, header=(0 if header_param == 'infer' else header_param))
+                                df_temp = pd.read_csv(
+                                    uploaded_file_stream, 
+                                    **attempt, 
+                                    header=(0 if header_param == 'infer' else header_param),
+                                    skiprows=skiprows_param
+                                )
                                 
                                 # Verifica se a leitura resultou em um DF utilizável (mais de 1 coluna)
                                 if df_temp.shape[1] > 1 and not df_temp.empty:
-                                    st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso: sep='{attempt['sep']}', decimal='{attempt['decimal']}', encoding='{attempt['encoding']}'" + (f" (Header na linha {header_param})" if header_param != 'infer' else ""))
+                                    st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso: sep='{attempt['sep']}', decimal='{attempt['decimal']}', encoding='{attempt['encoding']}'" + (f" (Skip Rows: {skiprows_param}, Header: {header_param})" if skiprows_param > 0 or header_param != 'infer' else ""))
+                                    
+                                    # Se pulamos a linha de cabeçalho (skiprows=1 e header=None), precisamos renomear
+                                    if skiprows_param == 1 and header_param is None:
+                                        # Assumimos que a primeira linha (agora linha 0) é o cabeçalho
+                                        df_temp.columns = [f'col_{i}' for i in range(len(df_temp.columns))]
+                                        # O código de limpeza de coluna abaixo vai tratar
+                                        
                                     success = True
                                     break # Sai do loop de tentativas se for bem-sucedido
                                 else:
@@ -625,9 +644,12 @@ with st.sidebar:
                                 
                     elif file_name.endswith('.xlsx'):
                         try:
+                            # A leitura de XLSX não tem as 9 tentativas, mas usa o openpyxl
                             df_temp = pd.read_excel(uploaded_file_stream)
                             if df_temp is not None and not df_temp.empty: 
                                 st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso (Excel).")
+                        except ImportError:
+                             st.error(f"Erro ao ler o XLSX '{file_name}': Missing optional dependency 'openpyxl'. Use pip or conda to install openpyxl. O ambiente python não está encontrando a biblioteca.")
                         except Exception as inner_e:
                             st.error(f"Erro ao ler o XLSX '{file_name}': {inner_e}")
                             
