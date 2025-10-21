@@ -281,7 +281,7 @@ with st.sidebar:
         
         st.markdown("---")
         
-        # --- Lógica de Configuração de Colunas (COM CORREÇÃO PARA LEITURA BR) ---
+        # --- Lógica de Configuração de Colunas (COM TENTATIVA FINAL) ---
         if st.session_state.show_reconfig_section:
             
             df_novo = pd.DataFrame()
@@ -372,7 +372,7 @@ with st.sidebar:
                                                 )
                                             except Exception as e6:
                                                 
-                                                # TENTATIVA 7 (NOVA): Python Engine, Latin-1, Sem Quoting (mais tolerante a aspas malucas)
+                                                # TENTATIVA 7: Python Engine, Latin-1, Sem Quoting (mais tolerante a aspas malucas)
                                                 try:
                                                     uploaded_file_stream.seek(0)
                                                     df_temp = pd.read_csv(
@@ -381,15 +381,35 @@ with st.sidebar:
                                                         encoding='latin-1', 
                                                         skipinitialspace=True,
                                                         engine='python', 
-                                                        # Remoção explícita de quoting e on_bad_lines
+                                                        # Sem quoting
                                                     )
                                                 except Exception as e7:
-                                                    # Falha total
-                                                    st.error(f"""
-                                                        Falha total ao ler o arquivo {file_name}.
-                                                        Detalhes: A leitura falhou após 7 tentativas. A causa mais provável é a inconsistência na estrutura do CSV ou a falta de um delimitador de texto claro.
-                                                    """)
-                                                    df_temp = None
+                                                    
+                                                    # TENTATIVA 8 (FINAL E MAIS ROBUSTA): Combina tudo em modo Python/Latin-1
+                                                    try:
+                                                        uploaded_file_stream.seek(0)
+                                                        df_temp = pd.read_csv(
+                                                            uploaded_file_stream, 
+                                                            sep=';', 
+                                                            decimal=',', # Tenta o formato BR
+                                                            thousands='.', # Tenta o formato BR
+                                                            encoding='latin-1', 
+                                                            engine='python',    
+                                                            quotechar='\"',     # Força as aspas duplas como delimitador de texto
+                                                            skipinitialspace=True,
+                                                            on_bad_lines='skip' # Ignora linhas problemáticas
+                                                        )
+                                                    except Exception as e8:
+                                                        # Falha total
+                                                        st.error(f"""
+                                                            Falha total ao ler o arquivo {file_name} após 8 tentativas robustas.
+                                                            Detalhes: O problema é irresolúvel pelo código. Isso indica uma falha na estrutura do CSV, provavelmente quebras de linha ou caracteres de aspas duplas mal escapados no cabeçalho ou nas primeiras linhas.
+                                                            **Ação Necessária:** Por favor, abra o arquivo CSV em um editor de texto (como VS Code ou Notepad++) e verifique as primeiras 20 linhas manualmente. Procure por:
+                                                            1.  Quebras de linha inesperadas dentro de campos entre aspas.
+                                                            2.  O número de pontos-e-vírgula (;) no cabeçalho deve ser exatamente igual ao das linhas de dados.
+                                                            3.  Remova as aspas duplas de todos os nomes de colunas no cabeçalho, se houver.
+                                                        """)
+                                                        df_temp = None
                                         
                     elif file_name.endswith('.xlsx'):
                         df_temp = pd.read_excel(uploaded_file_stream)
