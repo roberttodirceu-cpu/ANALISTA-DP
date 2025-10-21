@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Opção de Agregação Explícita, Concateção e Corrigido Erro de Leitura
+# app.py - Versão FINAL com Opção de Agregação Explícita, Concateção e Corrigido Erro de Leitura (v2.0 - skipinitialspace)
 
 import streamlit as st
 import pandas as pd
@@ -8,26 +8,90 @@ import numpy as np
 from datetime import datetime
 from io import BytesIO
 import pickle 
+import re 
+import unicodedata
 
 # ==============================================================================
 # IMPORTAÇÃO DE FUNÇÕES ESSENCIAIS DO UTILS.PY
 # ==============================================================================
-try:
-    from utils import (
-        formatar_moeda, 
-        inferir_e_converter_tipos, 
-        encontrar_colunas_tipos, 
-        verificar_ausentes,
-        gerar_rotulo_filtro 
-    )
-except ImportError:
-    # Se o utils.py não existe, simula as funções para que o código principal rode
-    def formatar_moeda(valor): return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    def inferir_e_converter_tipos(df, cols_texto, cols_valor): return df 
-    def encontrar_colunas_tipos(df): return [], []
-    def verificar_ausentes(df): return {}
-    def gerar_rotulo_filtro(df_completo, filtros_ativos, colunas_data, data_range): return "Filtros aplicados."
-    st.error("AVISO: O arquivo 'utils.py' não foi encontrado. Funções essenciais foram simuladas. O dashboard pode não funcionar corretamente. Certifique-se de que copiou o 'utils.py'.")
+# Funções simuladas para garantir que o código rode mesmo sem o utils.py
+def formatar_moeda(valor): 
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def limpar_string(text):
+    if pd.isna(text): return 'N/A'
+    return str(text).strip()
+
+def limpar_nome_coluna(col):
+    if not isinstance(col, str): return str(col).lower()
+    
+    col = col.strip().lower()
+    col = unicodedata.normalize('NFKD', col).encode('ascii', 'ignore').decode('utf-8')
+    col = re.sub(r'[^a-z0-9]+', '_', col) 
+    col = col.strip('_')
+    return col
+
+def inferir_e_converter_tipos(df, cols_texto, cols_valor): 
+    df_clean = df.copy()
+
+    # 1. Limpeza e Conversão de Colunas de Texto/Categoria
+    for col in cols_texto:
+        if col in df_clean.columns:
+            # Aplica limpeza para remover espaços em branco invisíveis e padronizar
+            df_clean[col] = df_clean[col].apply(limpar_string).astype('category')
+
+    # 2. Conversão de Colunas de Valor (Numéricas)
+    for col in cols_valor:
+        if col in df_clean.columns:
+            # Limpeza robusta para colunas de valor
+            try:
+                # Remove pontos (milhar) e substitui vírgulas (decimal) por ponto
+                df_clean[col] = df_clean[col].astype(str).str.replace(r'[^\d,\.-]', '', regex=True)
+                
+                # Tenta lidar com a notação brasileira (milhar=ponto, decimal=vírgula)
+                if df_clean[col].str.contains(r','):
+                    df_clean[col] = df_clean[col].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+                
+                # Coerce to numeric (erros se tornam NaN)
+                df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+            except:
+                st.warning(f"Aviso: Falha ao converter a coluna '{col}' para numérica.")
+                
+    return df_clean 
+
+def encontrar_colunas_tipos(df): 
+    # Simulação baseada em heurística para df já processado
+    cols_date = []
+    cols_numeric = df.select_dtypes(include=np.number).columns.tolist()
+    
+    # Heurística para colunas de data (se tiverem ano/mes, mas estão como categoria)
+    if 'ano' in df.columns and 'mes' in df.columns and 'mes' in df.select_dtypes(include=['category', 'object']).columns:
+        cols_date = ['ano', 'mes']
+
+    return cols_numeric, cols_date
+
+def gerar_rotulo_filtro(df_completo, filtros_ativos, colunas_data, data_range): 
+    if not filtros_ativos: return "NENHUM FILTRO CATEGÓRICO ATIVO (Todos os dados estão inclusos)."
+    
+    rotulo = []
+    for col, valores in filtros_ativos.items():
+        if valores and len(valores) > 0:
+            # Obter todas as opções únicas do DF completo para a coluna
+            opcoes_unicas = df_completo[col].astype(str).fillna('N/A').unique().tolist()
+            
+            # Se a seleção for a totalidade das opções, ignora (não é um filtro)
+            if len(valores) == len(opcoes_unicas):
+                continue
+
+            rotulo.append(f"**{col.title()}:** {', '.join(sorted(valores))[:100]}...") # Limita a 100 caracteres
+
+    if not rotulo:
+        return "NENHUM FILTRO CATEGÓRICO ATIVO (Todas as opções foram selecionadas)."
+
+    return "<br>".join(rotulo)
+
+def verificar_ausentes(df): return {} # Simplificação para o app.py
+
 
 # ==============================================================================
 
@@ -517,16 +581,19 @@ with st.sidebar:
                     uploaded_file_stream = BytesIO(file_bytes)
                     
                     if file_name.endswith('.csv'):
-                        # Tentativas de leitura de CSV (MUITO ROBUSTO + TENTATIVA FORÇADA DE PULAR CABEÇALHO)
+                        # Tentativas de leitura de CSV (9 combinações + skipinitialspace=True)
                         reading_attempts = [
-                            {'sep': ';', 'decimal': ',', 'encoding': 'utf-8', 'header': 'infer'},
-                            {'sep': ';', 'decimal': ',', 'encoding': 'latin-1', 'header': 'infer'},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'header': 'infer'},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'latin-1', 'header': 'infer'},
-                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'header': 'infer'},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'iso-8859-1', 'header': 'infer'},
-                            # TENTATIVA FORÇADA: Ignora a primeira linha (header=1, que é o índice 1)
-                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'header': 1}, 
+                            {'sep': ';', 'decimal': ',', 'encoding': 'utf-8', 'header': 'infer', 'skipinitialspace': True},
+                            {'sep': ';', 'decimal': ',', 'encoding': 'latin-1', 'header': 'infer', 'skipinitialspace': True},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'header': 'infer', 'skipinitialspace': True},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'latin-1', 'header': 'infer', 'skipinitialspace': True},
+                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'header': 'infer', 'skipinitialspace': True},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'iso-8859-1', 'header': 'infer', 'skipinitialspace': True},
+                            # TENTATIVA FORÇADA: Ignora a primeira linha (header=1)
+                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'header': 1, 'skipinitialspace': True}, 
+                            # Tentativas adicionais
+                            {'sep': ';', 'decimal': '.', 'encoding': 'utf-8', 'header': 'infer', 'skipinitialspace': True}, # Ponto-e-vírgula com decimal PONTO
+                            {'sep': '\t', 'decimal': ',', 'encoding': 'utf-8', 'header': 'infer', 'skipinitialspace': True}, # TAB como separador (TSV)
                         ]
                         
                         success = False
@@ -585,15 +652,7 @@ with st.sidebar:
                 if not df_atual_base.empty:
                     # Aplica a limpeza de colunas no DF atual para garantir que os nomes correspondam
                     raw_columns_base = df_atual_base.columns.copy()
-                    cleaned_columns_base = (
-                        raw_columns_base.astype(str)
-                        .str.strip()
-                        .str.lower()
-                        .str.normalize('NFKD')
-                        .str.encode('ascii', 'ignore').str.decode('utf-8')
-                        .str.replace(r'[^a-z0-9]+', '_', regex=True) 
-                        .str.strip('_') 
-                    )
+                    cleaned_columns_base = [limpar_nome_coluna(col) for col in raw_columns_base]
                     df_atual_base.columns = cleaned_columns_base
                     
                     # Concatena a base existente com o novo upload
@@ -610,15 +669,7 @@ with st.sidebar:
                 
                 # --- CORREÇÃO DE LIMPEZA MAIS ROBUSTA (Padronização de Colunas) ---
                 raw_columns = df_novo.columns.copy()
-                cleaned_columns = (
-                    raw_columns.astype(str)
-                    .str.strip()
-                    .str.lower()
-                    .str.normalize('NFKD')
-                    .str.encode('ascii', 'ignore').str.decode('utf-8')
-                    .str.replace(r'[^a-z0-9]+', '_', regex=True) 
-                    .str.strip('_') 
-                )
+                cleaned_columns = [limpar_nome_coluna(col) for col in raw_columns]
                 df_novo.columns = cleaned_columns
                 colunas_disponiveis = df_novo.columns.tolist()
 
