@@ -24,20 +24,19 @@ def inferir_e_converter_tipos(df, colunas_texto, colunas_moeda):
         if col in df_copia.columns:
             df_copia[col] = df_copia[col].astype(str).str.strip().fillna('N/A')
 
-    # 2. Colunas de Moeda (Valor) - CORREÇÃO DE LIMPEZA APLICADA AQUI
+    # 2. Colunas de Moeda (Valor) - CORREÇÃO DE LIMPEZA
     for col in colunas_moeda:
         if col in df_copia.columns:
-            # Se for string (objeto) ou se não for numérica, faz a limpeza para o formato US:
             if df_copia[col].dtype == 'object' or (df_copia[col].dtype != np.number):
-                # 1. Remove pontos de milhares (ex: 1.518,00 -> 1518,00)
-                # 2. Substitui vírgula por ponto decimal (ex: 1518,00 -> 1518.00)
+                # 1. Remove pontos de milhares
+                # 2. Substitui vírgula por ponto decimal
                 df_copia[col] = (
                     df_copia[col].astype(str)
                     .str.replace('.', '', regex=False)
                     .str.replace(',', '.', regex=False)
                 )
 
-            # Tenta forçar para numérico. Se a limpeza não funcionou, converte para NaN.
+            # Tenta forçar para numérico. 
             df_copia[col] = pd.to_numeric(df_copia[col], errors='coerce')
 
     # 3. Colunas Categóricas
