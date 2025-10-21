@@ -1,4 +1,5 @@
-# app.py
+# app.py - Versão CORRIGIDA
+# Adicionado forçar 'nome_funcionario' para lista de texto durante a configuração.
 
 import streamlit as st
 import pandas as pd
@@ -21,7 +22,6 @@ try:
         gerar_rotulo_filtro 
     )
 except ImportError:
-    # Se o utils.py não for encontrado, ele exibe a mensagem de erro no console do Streamlit
     st.error("ERRO CRÍTICO: O arquivo 'utils.py' não foi encontrado. Certifique-se de que ele está no mesmo diretório do 'app.py' e que copiou o código completo fornecido.")
     st.stop()
 # ==============================================================================
@@ -32,6 +32,7 @@ PERSISTENCE_PATH = 'data/data_sets_catalog.pkl'
 
 # ==============================================================================
 # FUNÇÕES DE GERENCIAMENTO DE ESTADO E PERSISTÊNCIA
+# (Funções auxiliares omitidas para brevidade, mantendo-se inalteradas)
 # ==============================================================================
 
 def load_catalog():
@@ -56,10 +57,8 @@ def limpar_filtros_salvos():
     st.session_state.active_filters_base = {}
     st.session_state.active_filters_comp = {}
     
-    # Incrementa o trigger para forçar o recálculo do cache de filtros
     st.session_state['filtro_reset_trigger'] += 1
     
-    # Limpa as chaves de estado de todos os widgets de filtro
     chaves_a_limpar = [
         key for key in st.session_state.keys() 
         if key.startswith('filtro_key_base_') or key.startswith('date_range_key_base_') or 
@@ -67,12 +66,9 @@ def limpar_filtros_salvos():
     ]
     for key in chaves_a_limpar:
         try:
-            # Não limpa a chave, mas zera o valor para forçar o multiselect a resetar.
-            # Isso é mais robusto que deletar a chave.
             if key.startswith('filtro_key_'):
                  st.session_state[key] = []
             elif key.startswith('date_range_key_'):
-                 # O range será redefinido pelo código, mas limpamos o estado se necessário.
                  del st.session_state[key]
         except:
             pass
@@ -82,14 +78,11 @@ def limpar_filtros_salvos():
 def set_multiselect_all(key, suffix, options_list):
     """Callback para o botão 'Selecionar Tudo'."""
     st.session_state[f'filtro_key_{suffix}_{key}'] = options_list
-    # Não usamos rerun aqui, pois o clique do botão já dispara o rerun
-    # A exceção é se você usar o rerun fora da função, o que não é o caso
     
 
 def set_multiselect_none(key, suffix):
     """Callback para o botão 'Limpar'."""
     st.session_state[f'filtro_key_{suffix}_{key}'] = []
-    # Não usamos rerun aqui
     
 def switch_dataset(dataset_name):
     """Troca o dataset ativo no dashboard."""
@@ -140,7 +133,6 @@ def initialize_widget_state(key, initial_default_calc):
 if 'data_sets_catalog' not in st.session_state: st.session_state.data_sets_catalog = load_catalog()
 if 'filtro_reset_trigger' not in st.session_state: st.session_state['filtro_reset_trigger'] = 0
 
-# Configura estado inicial baseado no último dataset carregado
 initial_df = pd.DataFrame()
 initial_filters = []
 initial_values = []
@@ -215,10 +207,6 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
 # --- FUNÇÃO PARA TABELA DE RESUMO E MÉTRICAS "EXPERT" ---
 
 def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, filtros_ativos_comp, colunas_data, data_range_base, data_range_comp):
-    """
-    Gera uma apresentação visualmente atraente do resumo de métricas chave,
-    incluindo Contagem de Funcionários, Vencimentos e Descontos.
-    """
     
     colunas_valor_salvas = st.session_state.colunas_valor_salvas
     
@@ -227,7 +215,6 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     # -------------------------------------------------------------
     st.markdown("#### 📝 Contexto do Filtro Ativo")
     
-    # Rótulos de contexto
     rotulo_base = gerar_rotulo_filtro(df_completo, filtros_ativos_base, colunas_data, data_range_base)
     rotulo_comp = gerar_rotulo_filtro(df_completo, filtros_ativos_comp, colunas_data, data_range_comp)
 
@@ -243,47 +230,47 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     """, unsafe_allow_html=True)
 
     # -------------------------------------------------------------
-    # 2. CALCULO DE VENCIMENTOS E DESCONTOS
+    # 2. CALCULO DE VENCIMENTOS E DESCONTOS E FUNCIONÁRIOS ÚNICOS
     # -------------------------------------------------------------
     
-    # Padronização de Colunas, conforme inferência do util.py e padrão do arquivo (FOLHA.csv)
     col_tipo_evento = 't' 
     col_valor = 'valor' 
     col_func = 'nome_funcionario' # Chave para Funcionário Único
     
+    # VERIFICAÇÃO CRÍTICA DE COLUNAS
     if col_tipo_evento not in df_completo.columns or col_valor not in df_completo.columns:
         st.error(f"Erro de Análise: Colunas '{col_tipo_evento}' ou '{col_valor}' não encontradas no DataFrame. Verifique a configuração de colunas.")
+        return
+        
+    # VERIFICAÇÃO DE FUNCIONÁRIOS ÚNICOS
+    if col_func not in df_completo.columns:
+        st.error(f"Erro Crítico: A coluna '{col_func}' não foi encontrada no DataFrame. Garanta que 'NOME FUNCIONARIO' foi selecionada como coluna de TEXTO no upload.")
         return
 
     def calcular_venc_desc(df):
         if df.empty:
-            return 0, 0, 0
+            return 0, 0, 0, 0
             
         df_clean = df.dropna(subset=[col_valor, col_tipo_evento])
 
-        # Vencimentos (T='C' - Crédito)
         vencimentos = df_clean[df_clean[col_tipo_evento] == 'C'][col_valor].sum()
-        
-        # Descontos (T='D' - Débito)
         descontos = df_clean[df_clean[col_tipo_evento] == 'D'][col_valor].sum()
-        
-        # Líquido (Vencimentos - Descontos)
         liquido = vencimentos - descontos
+        
+        # AQUI ESTÁ A CORREÇÃO DE SEGURANÇA: Contagem Única.
+        # Usa .dropna() para garantir que valores 'N/A' não sejam contados como um único funcionário.
+        func_count = df[col_func].astype(str).str.strip().replace('', np.nan).dropna().nunique()
 
-        return vencimentos, descontos, liquido
+        return vencimentos, descontos, liquido, func_count
 
     # Base
-    venc_base, desc_base, liq_base = calcular_venc_desc(df_base)
-    # CRÍTICO: Contagem de Funcionários Únicos
-    func_base = df_base[col_func].nunique() if col_func in df_base.columns and not df_base.empty else 0
+    venc_base, desc_base, liq_base, func_base = calcular_venc_desc(df_base)
     
     # Comparação
-    venc_comp, desc_comp, liq_comp = calcular_venc_desc(df_comp)
-    func_comp = df_comp[col_func].nunique() if col_func in df_comp.columns and not df_comp.empty else 0
+    venc_comp, desc_comp, liq_comp, func_comp = calcular_venc_desc(df_comp)
     
     # Total Geral
-    venc_total, desc_total, liq_total = calcular_venc_desc(df_completo)
-    func_total = df_completo[col_func].nunique() if col_func in df_completo.columns and not df_completo.empty else 0
+    venc_total, desc_total, liq_total, func_total = calcular_venc_desc(df_completo)
 
 
     # -------------------------------------------------------------
@@ -314,7 +301,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         delta=f"{delta_func_val} {delta_func_pct}"
     )
 
-    # KPI 2: Total de Vencimentos (Base)
+    # ... (Restante dos KPIs são mantidos)
     delta_venc_val, delta_venc_pct = get_delta(venc_comp, venc_base, is_currency=True)
     col2.metric(
         label=f"Total Vencimentos (Total: {formatar_moeda(venc_total)})", 
@@ -322,7 +309,6 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         delta=f"{delta_venc_val} {delta_venc_pct}"
     )
 
-    # KPI 3: Total de Descontos (Base)
     delta_desc_val, delta_desc_pct = get_delta(desc_comp, desc_base, is_currency=True)
     col3.metric(
         label=f"Total Descontos (Total: {formatar_moeda(desc_total)})", 
@@ -330,7 +316,6 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         delta=f"{delta_desc_val} {delta_desc_pct}"
     )
     
-    # KPI 4: Líquido (Base)
     delta_liq_val, delta_liq_pct = get_delta(liq_comp, liq_base, is_currency=True)
     col4.metric(
         label=f"Valor Líquido (Total: {formatar_moeda(liq_total)})", 
@@ -354,8 +339,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     dados_resumo.append({'Métrica': 'TOTAL DE DESCONTOS (DÉBITO)', 'Total Geral': desc_total, 'Base (Filtrado)': desc_base, 'Comparação (Filtrado)': desc_comp, 'Tipo': 'Moeda'})
     dados_resumo.append({'Métrica': 'VALOR LÍQUIDO (Venc - Desc)', 'Total Geral': liq_total, 'Base (Filtrado)': liq_base, 'Comparação (Filtrado)': liq_comp, 'Tipo': 'Moeda'})
 
-    # 4.2. Adiciona Métricas Genéricas
-    # Exclui a coluna 'VALOR' original, pois já foi tratada acima
+    # ... (Restante da função de tabela mantida)
     colunas_moeda_outras = [col for col in st.session_state.colunas_valor_salvas if col not in ['valor']] 
     for col in colunas_moeda_outras:
         total_geral_soma = df_completo[col].sum()
@@ -364,8 +348,6 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         dados_resumo.append({'Métrica': f"SOMA: {col.upper().replace('_', ' ')}", 'Total Geral': total_geral_soma, 'Base (Filtrado)': total_base_soma, 'Comparação (Filtrado)': total_comp_soma, 'Tipo': 'Moeda'})
             
     df_resumo = pd.DataFrame(dados_resumo)
-    
-    # 4.3. Cálculo da Variação e Formatação da Tabela
     
     def calcular_variacao(row):
         base = row['Base (Filtrado)']
@@ -418,10 +400,10 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
 
 # --- SIDEBAR (CONFIGURAÇÕES E UPLOAD) ---
 with st.sidebar:
+    # ... (Início do Sidebar e funções de gerenciamento mantidas)
     st.markdown("# 📊")
     st.title("⚙️ Configurações do Expert")
     
-    # Botão para Limpar Cache e Persistência
     if st.button("Limpar Cache de Dados e Persistência"):
         st.cache_data.clear()
         if os.path.exists(PERSISTENCE_PATH):
@@ -443,7 +425,6 @@ with st.sidebar:
         st.info("Estado da sessão limpo! Recarregando...")
         st.rerun()
 
-    # Seção 1: Trocar Dataset Ativo
     if st.session_state.data_sets_catalog:
         st.header("1. Trocar Dataset Ativo")
         dataset_names = list(st.session_state.data_sets_catalog.keys())
@@ -505,10 +486,8 @@ with st.sidebar:
                     uploaded_file_stream = BytesIO(file_bytes)
                     if file_name.endswith('.csv'):
                         try:
-                            # Tenta ler com o padrão BRL (';' e vírgula decimal)
                             df_temp = pd.read_csv(uploaded_file_stream, sep=';', decimal=',', encoding='utf-8')
                         except Exception:
-                            # Tenta ler com o padrão US (',' e ponto decimal)
                             uploaded_file_stream.seek(0)
                             df_temp = pd.read_csv(uploaded_file_stream, sep=',', decimal='.', encoding='utf-8')
                     elif file_name.endswith('.xlsx'):
@@ -533,10 +512,20 @@ with st.sidebar:
                 colunas_disponiveis = df_novo.columns.tolist()
                 st.info(f"Total de {len(df_novo)} linhas para configurar.")
                 
-                # Definição de defaults para colunas
                 moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
                 if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', moeda_default)
-                if 'texto_select' not in st.session_state: initialize_widget_state('texto_select', [])
+                
+                # CORREÇÃO CRÍTICA: Garante que 'nome_funcionario' é selecionado como texto
+                texto_default = [col for col in colunas_disponiveis if col in ['nr_func', 'nome_funcionario', 'emp', 'eve', 'seq', 't', 'tip', 'descricao_evento', 'tipo_processo']]
+                
+                # Se o estado de sessão já tem uma lista, a coluna 'nome_funcionario' deve ser adicionada se não estiver lá
+                if 'texto_select' not in st.session_state: 
+                    initialize_widget_state('texto_select', texto_default)
+                else:
+                    if 'nome_funcionario' not in st.session_state.texto_select and 'nome_funcionario' in colunas_disponiveis:
+                         st.session_state.texto_select.append('nome_funcionario')
+                         st.session_state.texto_select = list(set(st.session_state.texto_select)) # Remove duplicatas
+
                 
                 st.markdown("##### 💰 Colunas de VALOR (R$)")
                 colunas_moeda = st.multiselect("Selecione:", options=colunas_disponiveis, default=st.session_state.moeda_select, key='moeda_select', label_visibility="collapsed")
@@ -549,7 +538,6 @@ with st.sidebar:
                 df_processado = inferir_e_converter_tipos(df_novo, colunas_texto, colunas_moeda)
                 
                 colunas_para_filtro_options = df_processado.select_dtypes(include=['object', 'category']).columns.tolist()
-                # Ajuste o filtro_default para garantir que NOME_FUNCIONARIO e EMP estejam lá
                 filtro_default = [c for c in colunas_para_filtro_options if c in ['t', 'descricao_evento', 'nome_funcionario', 'emp', 'mes', 'ano', 'tipo_processo']] 
                 if 'filtros_select' not in st.session_state:
                     initialize_widget_state('filtros_select', filtro_default)
@@ -579,7 +567,7 @@ with st.sidebar:
     else: 
         st.session_state.show_reconfig_section = False
         if not st.session_state.data_sets_catalog:
-             st.info("Sistema pronto. Carregue um ou mais arquivos CSV/XLSX para iniciar o processamento e salvamento do dataset.")
+             st.info("Sistema pronto. O Dashboard será exibido após carregar, processar e selecionar um Dataset.")
 
 
 # --- Dashboard Principal ---
@@ -595,10 +583,7 @@ else:
     colunas_categoricas_filtro = st.session_state.colunas_filtros_salvas
     _, colunas_data = encontrar_colunas_tipos(df_analise_completo) 
     
-    # -------------------------------------------------------------
-    # 1. Painel de Filtros Simplificado (Filtros Categóricos e Data)
-    # -------------------------------------------------------------
-    
+    # ... (Restante do Painel de Filtros mantido)
     st.markdown("#### 🔍 Configuração de Análise de Variação")
     col_reset_btn = st.columns([4, 1])[1]
     with col_reset_btn:
@@ -614,7 +599,6 @@ else:
         
         with tab_container:
             
-            # --- Filtro de Data ---
             if colunas_data:
                 col_data_padrao = colunas_data[0]
                 df_col_data = df_analise_base[col_data_padrao].dropna()
@@ -645,13 +629,10 @@ else:
                                     (df_base_temp[col_data_padrao] <= pd.to_datetime(data_range[1]))
                                 ]
 
-
-            # --- Filtros Categóricos ---
             st.markdown("---")
             st.markdown("##### Filtros Categóricos")
             cols_container = st.columns(3) 
             
-            # CRÍTICO: Define a ordem de prioridade para a cascata (Empresa primeiro)
             colunas_ordenadas = []
             priority_cols = ['emp', 'tipo_processo', 't'] 
             employee_col = 'nome_funcionario' 
@@ -671,20 +652,16 @@ else:
                 with cols_container[i % 3]:
                     filtro_key = f'filtro_key_{suffix}_{col}'
                     
-                    # GERA AS OPÇÕES A PARTIR DO DF TEMPORÁRIO (FILTRO CASCATA)
                     opcoes_unicas_temp = sorted(df_base_temp[col].astype(str).fillna('N/A').unique().tolist())
                     
                     if filtro_key not in st.session_state:
                          st.session_state[filtro_key] = [] 
                     
-                    # **[CORREÇÃO CRÍTICA APLICADA AQUI]**
-                    # Limpa o default se a opção selecionada não estiver mais disponível
                     current_default = st.session_state.get(filtro_key, [])
                     
                     # Garante que o default contém APENAS opções que existem nas opções filtradas (opcoes_unicas_temp)
-                    # Isso é o que resolve o problema de funcionários zerados/desaparecendo
                     safe_default = [opt for opt in current_default if opt in opcoes_unicas_temp]
-                    st.session_state[filtro_key] = safe_default # Atualiza o estado da sessão com o valor seguro
+                    st.session_state[filtro_key] = safe_default 
 
                     is_filtered = len(safe_default) > 0
                     is_all_selected = len(safe_default) == len(opcoes_unicas_temp)
@@ -697,12 +674,9 @@ else:
                         with col_clr_btn: st.button("🗑️ Limpar (Nenhum)", on_click=lambda c=col, s=suffix: set_multiselect_none(c, s), key=f'select_none_btn_{suffix}_{col}', use_container_width=True)
                         st.markdown("---") 
                         
-                        # Renderiza o multiselect com o default seguro
                         selecao_form = st.multiselect("Selecione:", options=opcoes_unicas_temp, default=safe_default, key=filtro_key, label_visibility="collapsed")
                         current_active_filters_dict[col] = selecao_form
                     
-                    # APLICAÇÃO DO FILTRO NO DF TEMPORÁRIO PARA CASCATA NO PRÓXIMO WIDGET
-                    # O filtro é aplicado se estiver ATIVO (não vazio E não for todas as opções)
                     if selecao_form and len(selecao_form) > 0 and len(selecao_form) < len(opcoes_unicas_temp):
                         df_base_temp = df_base_temp[df_base_temp[col].astype(str).isin(selecao_form)]
             
@@ -711,27 +685,21 @@ else:
     filtros_ativos_base_render, data_range_base_render = render_filter_panel(tab_base, 'base', colunas_categoricas_filtro, df_analise_completo)
     filtros_ativos_comp_render, data_range_comp_render = render_filter_panel(tab_comparacao, 'comp', colunas_categoricas_filtro, df_analise_completo)
     
-    # Salva os filtros ativos (visíveis no widget) no estado da sessão
     st.session_state.active_filters_base = filtros_ativos_base_render
     st.session_state.active_filters_comp = filtros_ativos_comp_render
     
     st.markdown("---")
     submitted = st.button("✅ Aplicar Filtros e Rodar Comparação", use_container_width=True, type='primary')
     if submitted:
-        # Apenas incrementa o trigger para forçar o recálculo do cache
         st.session_state['filtro_reset_trigger'] += 1 
         st.rerun() 
         
-    # --- Coleta de Filtros para Aplicação (usando o estado da sessão) ---
     filtros_ativos_base_cache = st.session_state.active_filters_base
     filtros_ativos_comp_cache = st.session_state.active_filters_comp
     
     data_range_base_cache = data_range_base_render
     data_range_comp_cache = data_range_comp_render
 
-    # -------------------------------------------------------------
-    # 2. Aplicação do Filtro (Cache)
-    # -------------------------------------------------------------
     df_analise_base_filtrado, df_analise_comp_filtrado = aplicar_filtros_comparacao(
         df_analise_completo, 
         colunas_categoricas_filtro, 
@@ -749,9 +717,6 @@ else:
     df_comp_safe = st.session_state.df_filtrado_comp.copy() if not st.session_state.df_filtrado_comp.empty else pd.DataFrame(columns=df_analise_completo.columns)
 
 
-    # -------------------------------------------------------------
-    # 3. Exibição da Análise Expert Aprimorada
-    # -------------------------------------------------------------
     st.subheader("🌟 Resumo de Métricas e Análise de Variação - Visão Expert")
     
     if not df_base_safe.empty or not df_comp_safe.empty:
@@ -770,8 +735,5 @@ else:
 
     st.markdown("---")
     
-    # -------------------------------------------------------------
-    # 4. Detalhe dos Dados
-    # -------------------------------------------------------------
     st.subheader("📚 Detalhe dos Dados Filtrados (Base)")
     st.dataframe(df_base_safe, use_container_width=True)
