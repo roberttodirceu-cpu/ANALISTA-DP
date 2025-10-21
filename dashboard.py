@@ -21,8 +21,14 @@ try:
         gerar_rotulo_filtro 
     )
 except ImportError:
-    st.error("ERRO CRÍTICO: O arquivo 'utils.py' não foi encontrado. Certifique-se de que ele está no mesmo diretório do 'app.py' e que copiou o código completo fornecido.")
-    st.stop()
+    # Se o utils.py não existe, simula as funções para que o código principal rode
+    def formatar_moeda(valor): return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    def inferir_e_converter_tipos(df, cols_texto, cols_valor): return df 
+    def encontrar_colunas_tipos(df): return [], []
+    def verificar_ausentes(df): return {}
+    def gerar_rotulo_filtro(df_completo, filtros_ativos, colunas_data, data_range): return "Filtros aplicados."
+    st.error("AVISO: O arquivo 'utils.py' não foi encontrado. Funções essenciais foram simuladas. O dashboard pode não funcionar corretamente. Certifique-se de que copiou o 'utils.py'.")
+
 # ==============================================================================
 
 # --- Configuração da Página e Persistência ---
@@ -511,27 +517,35 @@ with st.sidebar:
                     uploaded_file_stream = BytesIO(file_bytes)
                     
                     if file_name.endswith('.csv'):
-                        # Tentativas de leitura de CSV (mais robusto)
+                        # Tentativas de leitura de CSV (MUITO ROBUSTO + TENTATIVA FORÇADA DE PULAR CABEÇALHO)
                         reading_attempts = [
-                            {'sep': ';', 'decimal': ',', 'encoding': 'utf-8'},
-                            {'sep': ';', 'decimal': ',', 'encoding': 'latin-1'},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'utf-8'},
-                            {'sep': ',', 'decimal': '.', 'encoding': 'latin-1'},
+                            {'sep': ';', 'decimal': ',', 'encoding': 'utf-8', 'header': 'infer'},
+                            {'sep': ';', 'decimal': ',', 'encoding': 'latin-1', 'header': 'infer'},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'header': 'infer'},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'latin-1', 'header': 'infer'},
+                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'header': 'infer'},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'iso-8859-1', 'header': 'infer'},
+                            # TENTATIVA FORÇADA: Ignora a primeira linha (header=1, que é o índice 1)
+                            {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'header': 1}, 
                         ]
                         
                         success = False
                         for attempt in reading_attempts:
                             try:
                                 uploaded_file_stream.seek(0)
-                                df_temp = pd.read_csv(uploaded_file_stream, **attempt)
+                                
+                                # Extrai o parâmetro de cabeçalho para tratamento especial
+                                header_param = attempt.pop('header') 
+                                
+                                # Tenta ler o CSV
+                                df_temp = pd.read_csv(uploaded_file_stream, **attempt, header=(0 if header_param == 'infer' else header_param))
                                 
                                 # Verifica se a leitura resultou em um DF utilizável (mais de 1 coluna)
                                 if df_temp.shape[1] > 1 and not df_temp.empty:
-                                    st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso: sep='{attempt['sep']}', decimal='{attempt['decimal']}', encoding='{attempt['encoding']}'")
+                                    st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso: sep='{attempt['sep']}', decimal='{attempt['decimal']}', encoding='{attempt['encoding']}'" + (f" (Header na linha {header_param})" if header_param != 'infer' else ""))
                                     success = True
                                     break # Sai do loop de tentativas se for bem-sucedido
                                 else:
-                                    # Se resultou em 1 coluna ou está vazio, pode ser a leitura errada, tenta a próxima
                                     df_temp = None 
 
                             except Exception:
@@ -539,12 +553,14 @@ with st.sidebar:
                                 pass 
                                 
                         if not success:
-                            st.error(f"Falha CRÍTICA ao ler o arquivo CSV '{file_name}'. Nenhuma das 4 tentativas de separador/decimal/encoding funcionou. Ele será ignorado.")
+                            st.error(f"Falha CRÍTICA ao ler o arquivo CSV '{file_name}'. Nenhuma das {len(reading_attempts)} tentativas de separador/decimal/encoding funcionou. Ele será ignorado.")
 
                                 
                     elif file_name.endswith('.xlsx'):
                         try:
                             df_temp = pd.read_excel(uploaded_file_stream)
+                            if df_temp is not None and not df_temp.empty: 
+                                st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso (Excel).")
                         except Exception as inner_e:
                             st.error(f"Erro ao ler o XLSX '{file_name}': {inner_e}")
                             
@@ -561,6 +577,10 @@ with st.sidebar:
             if all_dataframes:
                 df_novo_upload = pd.concat(all_dataframes, ignore_index=True)
                 
+                # <------------------------- AQUI ESTÁ O DEBUG ------------------------->
+                st.sidebar.warning(f"DEBUG: df_novo_upload (Dados Carregados) lido com {len(df_novo_upload)} linhas.")
+                # <--------------------------------------------------------------------->
+
                 # 3. Concatena o novo upload com o dataset base existente, se houver
                 if not df_atual_base.empty:
                     # Aplica a limpeza de colunas no DF atual para garantir que os nomes correspondam
