@@ -1,4 +1,4 @@
-# app.py - Versão Final com Persistência, Navegação por Botões e Flexibilidade de Métrica
+# app.py - Versão Final com Persistência, Navegação por Botões, Métrica Global e Renomeação Crítica
 
 import streamlit as st
 import pandas as pd
@@ -68,8 +68,15 @@ def limpar_filtros_salvos():
     ]
     for key in chaves_a_limpar:
         try:
+            # Reseta multiselects para o estado "Selecionar Tudo" (default)
             if key.startswith('filtro_key_'):
-                 st.session_state[key] = []
+                 # Tenta encontrar as opções válidas para esta coluna no DF ativo
+                 col_name = key.split('_')[-1]
+                 if col_name in st.session_state.dados_atuais.columns:
+                      options = st.session_state.dados_atuais[col_name].astype(str).fillna('N/A').unique().tolist()
+                      st.session_state[key] = options
+                 else:
+                      st.session_state[key] = []
             elif key.startswith('date_range_key_'):
                  del st.session_state[key]
         except:
@@ -89,22 +96,26 @@ def set_multiselect_none(key, suffix):
 def switch_dataset(dataset_name):
     """
     Troca o dataset ativo no dashboard baseado no nome (chave do catálogo).
-    Esta função é o callback dos novos botões de navegação.
     """
     if dataset_name in st.session_state.data_sets_catalog:
         data = st.session_state.data_sets_catalog[dataset_name]
+        
+        # Carrega o DF e as configurações de colunas
         st.session_state.dados_atuais = data['df']
         st.session_state.colunas_filtros_salvas = data['colunas_filtros_salvas']
         st.session_state.colunas_valor_salvas = data['colunas_valor_salvas']
-        st.session_state.current_dataset_name = dataset_name # Atualiza o nome do dataset ativo
+        st.session_state.current_dataset_name = dataset_name
         
-        # Carrega o tipo de métrica principal do catálogo
+        # Carrega o tipo de métrica principal
         st.session_state.main_metric_type = data.get('main_metric_type', 'VALUE')
         
         default_exclude = [col for col in data['df'].columns if col in ['emp', 'eve', 'seq', 'nr_func']]
         st.session_state.cols_to_exclude_analysis = default_exclude
         
-        limpar_filtros_salvos()
+        # APENAS RESETA O TRIGGER para forçar o recálculo do cache com os novos dados
+        st.session_state['filtro_reset_trigger'] += 1
+        
+        st.rerun() 
     else:
         st.error(f"Dataset '{dataset_name}' não encontrado.")
 
@@ -114,19 +125,13 @@ def show_reconfig_panel():
 def get_clean_dataset_name(original_file_names, existing_names, user_input_name):
     """
     Gera o nome de catálogo limpo (sem extensão) e garante unicidade.
-    
-    - Se houver apenas 1 arquivo: usa o nome do arquivo (sem extensão).
-    - Se houver >1 arquivo: usa o nome fornecido pelo usuário.
     """
     if len(original_file_names) == 1:
-        # Caso de um único arquivo: Usa o nome do arquivo sem extensão
         original_name = original_file_names[0]
         base_name = os.path.splitext(original_name)[0].strip()
     else:
-        # Caso de múltiplos arquivos ou nome padrão: Usa o nome fornecido
         base_name = user_input_name
         
-    # Garante que o nome final é único no catálogo
     clean_name = base_name
     counter = 1
     temp_existing = set(existing_names)
@@ -152,7 +157,7 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name
         'df': df_novo,
         'colunas_filtros_salvas': colunas_filtros,
         'colunas_valor_salvas': colunas_valor,
-        'main_metric_type': main_metric_type, # SALVA A NOVA VARIÁVEL
+        'main_metric_type': main_metric_type, 
     }
     
     save_catalog(st.session_state.data_sets_catalog)
@@ -160,8 +165,8 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name
     st.session_state.dados_atuais = df_novo 
     st.session_state.colunas_filtros_salvas = colunas_filtros
     st.session_state.colunas_valor_salvas = colunas_valor
-    st.session_state.current_dataset_name = base_name # Define o novo dataset como ativo
-    st.session_state.main_metric_type = main_metric_type # Define o tipo de métrica para a sessão
+    st.session_state.current_dataset_name = base_name 
+    st.session_state.main_metric_type = main_metric_type 
     
     default_exclude = [col for col in df_novo.columns if col in ['emp', 'eve', 'seq', 'nr_func']]
     st.session_state.cols_to_exclude_analysis = default_exclude
@@ -185,11 +190,9 @@ initial_metric_type = 'VALUE'
 
 # Lógica para carregar o estado inicial (último dataset usado ou o primeiro do catálogo)
 if st.session_state.data_sets_catalog:
-    # Tenta carregar o último dataset ativo
     if 'current_dataset_name' in st.session_state and st.session_state.current_dataset_name in st.session_state.data_sets_catalog:
         initial_name = st.session_state.current_dataset_name
     else:
-        # Caso contrário, carrega o último dataset do catálogo
         initial_name = list(st.session_state.data_sets_catalog.keys())[-1]
         
     data = st.session_state.data_sets_catalog[initial_name]
@@ -227,12 +230,18 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
             selecao = filtros_ativos_dict.get(col)
             if col not in df_filtrado_temp.columns: continue
 
-            opcoes_unicas = df_base[col].astype(str).fillna('N/A').unique().tolist()
+            # Não é necessário saber todas as opções, apenas se o filtro está ativo.
+            # Um filtro está ativo se 'selecao' não for vazio E não for 'selecionar tudo'.
             
-            # Aplica filtro SOMENTE se a seleção não estiver vazia E não for total
-            if selecao and len(selecao) > 0 and len(selecao) < len(opcoes_unicas): 
-                # Converte a coluna para string para garantir a comparação
-                df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
+            # Filtro ativo só se a lista de seleção não for vazia
+            if selecao and len(selecao) > 0:
+                 # Se o total de opções selecionadas for menor que o total no DF base
+                 opcoes_unicas_df_completo = df_base[col].astype(str).fillna('N/A').unique().tolist()
+                 
+                 if len(selecao) < len(opcoes_unicas_df_completo):
+                    # Converte a coluna para string para garantir a comparação
+                    df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
+            # Note: Se len(selecao) == len(opcoes_unicas_df_completo), o filtro é ignorado (TOTAL).
         
         return df_filtrado_temp
     
@@ -480,7 +489,6 @@ with st.sidebar:
             except Exception as e:
                 st.sidebar.error(f"Erro ao remover arquivo de persistência: {e}")
         
-        # Limpa o estado da sessão (exceto o catálogo, que já foi limpo/removido)
         keys_to_clear = [k for k in st.session_state.keys() if not k.startswith('_')]
         for key in keys_to_clear:
             if key not in ['data_sets_catalog', 'dados_atuais']:
@@ -490,9 +498,35 @@ with st.sidebar:
                     pass
         st.info("Estado da sessão limpo! Recarregando...")
         st.rerun()
+    
+    st.markdown("---")
+    
+    # -----------------------------------------------------------------------
+    # 0. CHAVE DE CONFIGURAÇÃO - MÉTRICA PRINCIPAL (SEMPRE VISÍVEL)
+    # -----------------------------------------------------------------------
+    st.header("🔑 Métrica Principal")
+    # Definição do formato e index para o radio button
+    radio_options = ['Valor Monetário (Crédito/Débito)', 'Apenas Contagem de Registros']
+    current_radio_index = 0 if st.session_state.main_metric_type == 'VALUE' else 1
 
+    selected_radio_text = st.radio(
+        "Foco da Análise:",
+        options=radio_options,
+        index=current_radio_index,
+        format_func=lambda x: x.split(" (")[0],
+        key='radio_main_metric_global' # Chave GLOBAL
+    )
+
+    # Conversão do texto para o estado interno (usa o callback do radio)
+    if selected_radio_text == 'Apenas Contagem de Registros':
+        st.session_state.main_metric_type = 'COUNT'
+    else:
+        st.session_state.main_metric_type = 'VALUE'
+
+    st.markdown("---")
+    # -----------------------------------------------------------------------
             
-    # Seção 2: Upload e Processamento
+    # Seção 1: Upload e Processamento
     st.header("1. Upload e Processamento")
     
     # Lista de nomes de arquivo carregados, para o processamento
@@ -612,32 +646,6 @@ with st.sidebar:
                         st.sidebar.info(f"Col. de Valor renomeada para '{target_col_valor}'.")
 
                 # --- FIM DA VERIFICAÇÃO CRÍTICA ---
-
-
-                # --- NOVO: SELETOR DE MÉTRICA PRINCIPAL ---
-                st.markdown("---")
-                st.markdown("##### 🔑 Métrica Principal do Dashboard")
-                
-                # Definição do formato e index para o radio button
-                radio_options = ['Valor Monetário (Crédito/Débito)', 'Apenas Contagem de Registros']
-                current_radio_index = 0 if st.session_state.main_metric_type == 'VALUE' else 1
-                
-                selected_radio_text = st.radio(
-                    "Foco da Análise:",
-                    options=radio_options,
-                    index=current_radio_index,
-                    format_func=lambda x: x.split(" (")[0],
-                    key='radio_main_metric_sidebar'
-                )
-                
-                # Conversão do texto para o estado interno
-                if selected_radio_text == 'Apenas Contagem de Registros':
-                    st.session_state.main_metric_type = 'COUNT'
-                else:
-                    st.session_state.main_metric_type = 'VALUE'
-                
-                st.markdown("---")
-                # --- FIM NOVO SELETOR ---
                 
                 
                 # --- Seleção de Tipos e Filtros ---
@@ -690,7 +698,7 @@ with st.sidebar:
                             colunas_valor_dashboard, 
                             dataset_name_to_save,
                             uploaded_file_names,
-                            st.session_state.main_metric_type
+                            st.session_state.main_metric_type # Usa a Métrica Global
                         )
                         if sucesso:
                             st.success(f"Dataset '{st.session_state.current_dataset_name}' processado e salvo no catálogo!")
@@ -796,16 +804,21 @@ else:
                     
                     widget_key = f'filtro_key_{suffix}_{col}'
                     
+                    # Garante que o estado existe, inicializando com todas as opções se for a primeira vez
                     if widget_key not in st.session_state:
                         st.session_state[widget_key] = options 
 
                     selected = st.session_state[widget_key]
                     
-                    rotulo_expander = f"{col.replace('_', ' ').title()} ({len(selected)} opções)"
+                    # Lógica para determinar o rótulo do expander
+                    rotulo_expander = f"{col.replace('_', ' ').title()} ({len(options)} opções)"
+                    
                     if len(selected) == len(options):
                         rotulo_expander += " - TOTAL"
                     elif not selected:
                         rotulo_expander += " - INATIVO"
+                    else:
+                        rotulo_expander += f" ({len(selected)} opções selecionadas)"
                     
                     with cols[col_index % 3]:
                         with st.expander(rotulo_expander):
