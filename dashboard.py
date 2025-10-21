@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Concateção, Limpeza Agressiva de Colunas e APENAS Filtros Categóricos (Multiselect)
+# app.py - Versão FINAL com Opção de Agregação Explícita, Concateção e Filtros Categóricos
 
 import streamlit as st
 import pandas as pd
@@ -470,19 +470,40 @@ with st.sidebar:
             # --- LÓGICA DE CARREGAMENTO PARA CONCATENAÇÃO (SOMA DE DADOS) ---
             df_atual_base = pd.DataFrame()
             dataset_name_to_use = st.session_state.get('current_dataset_name_input', default_dataset_name)
+
+            # --- NOVO SELETOR PARA CONCATENAÇÃO ---
+            st.markdown("##### ➕ Opção de Soma/Agregação")
             
-            # 1. Tenta carregar o dataset ativo atual se o nome de entrada for o mesmo do ativo
-            if st.session_state.current_dataset_name:
-                 # Se o usuário não alterou o nome, ou usou o mesmo nome, assumimos que ele quer atualizar o ativo
-                if dataset_name_to_use == st.session_state.current_dataset_name:
-                    st.sidebar.info(f"Atualizando o Dataset Ativo: '{st.session_state.current_dataset_name}'...")
-                    
-                    # Carrega a versão mais recente do DataFrame no catálogo
-                    if st.session_state.current_dataset_name in st.session_state.data_sets_catalog:
-                        df_atual_base = st.session_state.data_sets_catalog[st.session_state.current_dataset_name]['df'].copy()
-                        st.sidebar.info(f"Dados existentes carregados: {len(df_atual_base)} linhas.")
-                
+            # Lista de datasets disponíveis, incluindo uma opção para não somar (Novo Dataset)
+            catalog_names = ["Novo Dataset (Substituir/Criar)"] + list(st.session_state.data_sets_catalog.keys())
             
+            selected_dataset_to_sum = st.selectbox(
+                "Somar arquivos carregados com qual Dataset existente?",
+                options=catalog_names,
+                index=0,
+                key='dataset_to_sum_selector'
+            )
+            
+            # O nome do dataset final (para salvar) agora depende da opção de soma
+            if selected_dataset_to_sum != "Novo Dataset (Substituir/Criar)":
+                dataset_name_to_use = selected_dataset_to_sum
+                # Garante que o nome do input seja o nome do dataset que será atualizado
+                st.session_state.current_dataset_name_input = dataset_name_to_use 
+                st.info(f"Os novos dados serão SOMADOS ao dataset **{dataset_name_to_use}**.")
+            else:
+                # Se for novo, usa o nome digitado anteriormente (dataset_name_input)
+                dataset_name_to_use = st.session_state.get('current_dataset_name_input', default_dataset_name)
+
+
+            # 1. Tenta carregar o dataset ATIVO ESCOLHIDO para soma
+            if selected_dataset_to_sum != "Novo Dataset (Substituir/Criar)":
+                st.sidebar.info(f"Carregando dados existentes de: '{dataset_name_to_use}'...")
+                if dataset_name_to_use in st.session_state.data_sets_catalog:
+                    df_atual_base = st.session_state.data_sets_catalog[dataset_name_to_use]['df'].copy()
+                    st.sidebar.info(f"Dados existentes carregados: {len(df_atual_base)} linhas.")
+
+
+            # 2. Processa o(s) novo(s) arquivo(s)
             for file_name, file_bytes in st.session_state.uploaded_files_data.items():
                 try:
                     uploaded_file_stream = BytesIO(file_bytes)
@@ -507,7 +528,7 @@ with st.sidebar:
             if all_dataframes:
                 df_novo_upload = pd.concat(all_dataframes, ignore_index=True)
                 
-                # 2. Concatena o novo upload com o dataset base existente, se houver
+                # 3. Concatena o novo upload com o dataset base existente, se houver
                 if not df_atual_base.empty:
                     # Aplica a limpeza de colunas no DF atual para garantir que os nomes correspondam
                     raw_columns_base = df_atual_base.columns.copy()
@@ -526,7 +547,7 @@ with st.sidebar:
                     df_novo = pd.concat([df_atual_base, df_novo_upload], ignore_index=True)
                     st.sidebar.info(f"CONCATENAÇÃO: {len(df_atual_base)} (Existente) + {len(df_novo_upload)} (Novo) = {len(df_novo)} linhas totais.")
                 else:
-                    df_novo = df_novo_upload
+                    df_novo = df_novo_upload # Se não escolheu somar, o df_novo é apenas o upload.
             
             if df_novo.empty:
                 st.error("O conjunto de dados consolidado está vazio.")
@@ -627,11 +648,11 @@ with st.sidebar:
                         st.warning("Selecione pelo menos uma coluna na seção 'Colunas para FILTROS'.")
                     else:
                         
-                        # --- FORÇA O NOME DO DATASET ATIVO SE ESTIVER ATUALIZANDO ---
-                        if st.session_state.current_dataset_name and dataset_name_to_use == st.session_state.current_dataset_name:
-                            final_dataset_name = st.session_state.current_dataset_name
+                        # --- DEFINE O NOME FINAL DO DATASET ---
+                        if selected_dataset_to_sum != "Novo Dataset (Substituir/Criar)":
+                            final_dataset_name = selected_dataset_to_sum # Mantém o nome do dataset que foi agregado
                         else:
-                            final_dataset_name = dataset_name_to_use
+                            final_dataset_name = dataset_name_to_use # Usa o nome digitado para um novo dataset
                             
                         sucesso, df_processado_salvo = processar_dados_atuais(df_processado, colunas_para_filtro, colunas_valor_dashboard, final_dataset_name)
                         
