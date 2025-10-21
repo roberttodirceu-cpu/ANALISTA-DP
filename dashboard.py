@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Opção de Agregação Explícita, Concateção e Filtros Categóricos
+# app.py - Versão FINAL com Opção de Agregação Explícita, Concateção e Corrigido Erro de Leitura
 
 import streamlit as st
 import pandas as pd
@@ -505,11 +505,15 @@ with st.sidebar:
 
             # 2. Processa o(s) novo(s) arquivo(s)
             for file_name, file_bytes in st.session_state.uploaded_files_data.items():
+                df_temp = None # <--- CORREÇÃO CRÍTICA: Inicializa df_temp para evitar NameError
+                
                 try:
                     uploaded_file_stream = BytesIO(file_bytes)
+                    
                     if file_name.endswith('.csv'):
                         try:
                             # Tenta ler com separador ';', decimal ','
+                            uploaded_file_stream.seek(0)
                             df_temp = pd.read_csv(uploaded_file_stream, sep=';', decimal=',', encoding='utf-8')
                         except Exception:
                             uploaded_file_stream.seek(0)
@@ -518,11 +522,12 @@ with st.sidebar:
                     elif file_name.endswith('.xlsx'):
                         df_temp = pd.read_excel(uploaded_file_stream)
                     
-                    if not df_temp.empty:
+                    # CORREÇÃO: Verifica se df_temp foi definido e não está vazio
+                    if df_temp is not None and not df_temp.empty: 
                         all_dataframes.append(df_temp)
                         
                 except Exception as e:
-                    st.error(f"Erro ao ler o arquivo {file_name}: {e}")
+                    st.error(f"Erro ao ler o arquivo {file_name}. Ele será ignorado. Detalhe: {e}")
                     pass 
 
             if all_dataframes:
