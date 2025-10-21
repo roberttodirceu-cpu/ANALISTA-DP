@@ -22,27 +22,25 @@ def inferir_e_converter_tipos(df, colunas_texto, colunas_moeda):
         if col in colunas_moeda:
             # Tenta limpar o formato BRL (R$, ponto como separador de milhar e vírgula como decimal)
             try:
-                # Conversão explícita de string para número (tratando vírgula decimal)
+                # CRÍTICO: Conversão explícita de string para número (tratando vírgula decimal)
                 df_novo[col] = df_novo[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
                 df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce')
             except Exception:
-                # Se falhar, tenta conversão simples
                 df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce')
         
         # Converte colunas explicitamente marcadas para string/object
         elif col in colunas_texto:
-            df_novo[col] = df_novo[col].astype('object').astype('category')
+            df_novo[col] = df_novo[col].astype('object')
         
         # Tenta converter colunas numéricas restantes para int/float se não forem datas
         elif df_novo[col].dtype not in ['datetime64[ns]']:
             try:
-                # Tenta Int
                 if df_novo[col].dropna().apply(lambda x: float(x).is_integer()).all():
                     df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce', downcast='integer')
                 else:
                     df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce')
             except:
-                pass # Deixa como está se falhar
+                pass
 
     # 2. Conversão de Colunas de Data (Se for ANO e MES)
     if 'ano' in df_novo.columns and 'mes' in df_novo.columns:
@@ -78,6 +76,7 @@ def gerar_rotulo_filtro(df_completo, filtros_ativos_dict, colunas_data, data_ran
     
     # Rótulos Categóricos
     for col, selecoes in filtros_ativos_dict.items():
+        if col not in df_completo.columns: continue
         opcoes_unicas = df_completo[col].astype(str).fillna('N/A').unique().tolist()
         
         # Só mostra se o filtro estiver ativo (len > 0 e len < total de opções)
@@ -86,14 +85,17 @@ def gerar_rotulo_filtro(df_completo, filtros_ativos_dict, colunas_data, data_ran
     
     # Rótulos de Data
     if data_range and colunas_data:
-        data_min_df = df_completo[colunas_data[0]].min()
-        data_max_df = df_completo[colunas_data[0]].max()
-        
-        # Se o intervalo for diferente do total, mostra
-        if pd.to_datetime(data_range[0]) > data_min_df or pd.to_datetime(data_range[1]) < data_max_df:
-            data_inicio = data_range[0].strftime('%Y-%m-%d')
-            data_fim = data_range[1].strftime('%Y-%m-%d')
-            rotulos.append(f"**Data**: {data_inicio} até {data_fim}")
+        data_col = colunas_data[0]
+        data_series = df_completo[data_col].dropna()
+        if not data_series.empty:
+            data_min_df = data_series.min()
+            data_max_df = data_series.max()
+            
+            # Se o intervalo for diferente do total, mostra
+            if pd.to_datetime(data_range[0]) > data_min_df or pd.to_datetime(data_range[1]) < data_max_df:
+                data_inicio = data_range[0].strftime('%Y-%m-%d')
+                data_fim = data_range[1].strftime('%Y-%m-%d')
+                rotulos.append(f"**Data ({data_col.title()})**: {data_inicio} até {data_fim}")
             
     if not rotulos:
         return "Nenhum Filtro Ativo. (Análise no Total Geral)"
