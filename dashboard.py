@@ -13,7 +13,11 @@ try:
     # Caso o 'utils.py' esteja faltando, o Streamlit irá parar aqui.
     from utils import formatar_moeda, inferir_e_converter_tipos, encontrar_colunas_tipos, verificar_ausentes
 except ImportError:
-    st.error("Erro: O arquivo 'utils.py' não foi encontrado. Certifique-se de que ele está no mesmo diretório.")
+    st.error("""
+        Erro: O arquivo 'utils.py' não foi encontrado. 
+        Certifique-se de que ele está no mesmo diretório e contém as funções: 
+        formatar_moeda, inferir_e_converter_tipos, encontrar_colunas_tipos, verificar_ausentes.
+    """)
     st.stop()
 
 # --- Configuração da Página e Persistência ---
@@ -26,7 +30,7 @@ def load_catalog():
         try:
             with open(PERSISTENCE_PATH, 'rb') as f:
                 return pickle.load(f)
-        except Exception as e:
+        except Exception:
             # st.sidebar.error(f"Erro ao carregar dados salvos: {e}. Inicializando vazio.")
             return {}
     return {}
@@ -332,7 +336,7 @@ with st.sidebar:
             
             for file_name, file_bytes in st.session_state.uploaded_files_data.items():
                 
-                # CORREÇÃO 1: Inicializa df_temp como None em cada iteração
+                # CORREÇÃO: Inicializa df_temp como None em cada iteração
                 df_temp = None 
                 
                 try:
@@ -340,36 +344,53 @@ with st.sidebar:
                     
                     if file_name.endswith('.csv'):
                         
-                        # TENTATIVA 1 (ROBUSTA BR): Separador ';', Decimal ',', Milhar '.', Latin-1
+                        # TENTATIVA 1: Formato BR (sep=';', decimal=',') + Codificação UTF-8 (MAIS COMUM)
                         try:
                             uploaded_file_stream.seek(0)
                             df_temp = pd.read_csv(
                                 uploaded_file_stream, 
                                 sep=';', 
                                 decimal=',', 
-                                thousands='.',         # <--- CORREÇÃO: Essencial para valores como '1.100,00'
-                                encoding='latin-1',    # <--- CORREÇÃO: Codificação comum para sistemas legados
-                                skipinitialspace=True  # <--- CORREÇÃO: Ignora espaços após o delimitador
+                                thousands='.',       
+                                encoding='utf-8',    
+                                skipinitialspace=True
                             )
                         except Exception as e1:
-                            # TENTATIVA 2 (PADRÃO US): Separador ',', Decimal '.', UTF-8
+                            # TENTATIVA 2: Formato BR (sep=';', decimal=',') + Codificação Latin-1 (LEGADO)
                             try:
                                 uploaded_file_stream.seek(0)
                                 df_temp = pd.read_csv(
                                     uploaded_file_stream, 
-                                    sep=',', 
-                                    decimal='.', 
-                                    encoding='utf-8' 
+                                    sep=';', 
+                                    decimal=',', 
+                                    thousands='.',       
+                                    encoding='latin-1',    
+                                    skipinitialspace=True
                                 )
                             except Exception as e2:
-                                # Falha total
-                                st.error(f"Falha total ao ler o arquivo {file_name} nas duas tentativas de formato CSV. Erro Tentativa 1 (BR): {e1} | Erro Tentativa 2 (US): {e2}")
-                                df_temp = None
+                                # TENTATIVA 3: Formato US (sep=',', decimal='.') + Codificação UTF-8 (PADRÃO INTERNACIONAL)
+                                try:
+                                    uploaded_file_stream.seek(0)
+                                    df_temp = pd.read_csv(
+                                        uploaded_file_stream, 
+                                        sep=',', 
+                                        decimal='.', 
+                                        encoding='utf-8' 
+                                    )
+                                except Exception as e3:
+                                    # Falha total
+                                    st.error(f"""
+                                        Falha total ao ler o arquivo {file_name}. Detalhes:
+                                        - Erro BR/UTF-8: {e1}
+                                        - Erro BR/Latin-1: {e2}
+                                        - Erro US/UTF-8: {e3}
+                                    """)
+                                    df_temp = None
                             
                     elif file_name.endswith('.xlsx'):
                         df_temp = pd.read_excel(uploaded_file_stream)
                     
-                    # CORREÇÃO 2: Apenas adiciona se df_temp foi definido (não é None) e não está vazio
+                    # Apenas adiciona se df_temp foi definido (não é None) e não está vazio
                     if df_temp is not None and not df_temp.empty: 
                         all_dataframes.append(df_temp)
                         
