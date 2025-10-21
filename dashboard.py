@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com Limpeza Agressiva de Colunas e Correção de Mês/Ano para Filtros Categóricos
+# app.py - Versão FINAL com Limpeza Agressiva de Colunas e APENAS Filtros Categóricos (Multiselect)
 
 import streamlit as st
 import pandas as pd
@@ -67,6 +67,7 @@ def limpar_filtros_salvos():
             if key.startswith('filtro_key_'):
                  st.session_state[key] = []
             elif key.startswith('date_range_key_'):
+                 # Garante que os estados do slider de data são removidos
                  del st.session_state[key]
         except:
             pass
@@ -162,7 +163,10 @@ if 'cols_to_exclude_analysis' not in st.session_state:
 @st.cache_data(show_spinner="Aplicando filtros de Base e Comparação...")
 def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtros_ativos_comp, col_data, data_range_base, data_range_comp, trigger):
     
-    def _aplicar_filtro_single(df, col_filtros_list, filtros_ativos_dict, col_data, data_range):
+    # OBS: data_range_base e data_range_comp serão None, pois o slider foi removido.
+    # O filtro de data só será aplicado se os filtros categóricos MES e ANO forem usados.
+
+    def _aplicar_filtro_single(df, col_filtros_list, filtros_ativos_dict):
         df_filtrado_temp = df.copy()
         
         # 1. Filtros Categóricos
@@ -174,31 +178,17 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
             
             # Aplica filtro SOMENTE se a seleção não estiver vazia E não for total
             if selecao and len(selecao) > 0 and len(selecao) < len(opcoes_unicas): 
+                # Converte a coluna para string para garantir a filtragem categórica
                 df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
         
-        # 2. Filtro de Data (SÓ É APLICADO SE HOUVER COLUNA DE DATA E DATA_RANGE)
-        if data_range and len(data_range) == 2 and col_data and col_data[0] in df_filtrado_temp.columns:
-            col_data_padrao = col_data[0]
-            df_filtrado_temp[col_data_padrao] = pd.to_datetime(df_filtrado_temp[col_data_padrao], errors='coerce')
-            
-            data_series_full = df_base[col_data_padrao].dropna()
-            data_min_df = data_series_full.min()
-            data_max_df = data_series_full.max()
-            
-            data_range_start = pd.to_datetime(data_range[0])
-            data_range_end = pd.to_datetime(data_range[1])
-
-            # Aplica filtro de data APENAS se o intervalo selecionado for diferente do intervalo total do DF
-            if data_range_start > data_min_df or data_range_end < data_max_df:
-                df_filtrado_temp = df_filtrado_temp[
-                    (df_filtrado_temp[col_data_padrao] >= data_range_start) &
-                    (df_filtrado_temp[col_data_padrao] <= data_range_end)
-                ]
+        # O filtro de Data (Slider) foi removido, então não há aplicação de data_range aqui.
         return df_filtrado_temp
     
-    df_base_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_base, col_data, data_range_base)
-    df_comp_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_comp, col_data, data_range_comp)
+    # Passamos apenas as listas de filtros categóricos
+    df_base_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_base)
+    df_comp_filtrado = _aplicar_filtro_single(df_base, col_filtros, filtros_ativos_comp)
     
+    # Retornamos os DataFrames filtrados e None para os ranges de data, que não são usados
     return df_base_filtrado, df_comp_filtrado
 
 
@@ -213,6 +203,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     # -------------------------------------------------------------
     st.markdown("#### 📝 Contexto do Filtro Ativo")
     
+    # A função gerar_rotulo_filtro foi ajustada para aceitar None para data_range
     rotulo_base = gerar_rotulo_filtro(df_completo, filtros_ativos_base, colunas_data, data_range_base)
     rotulo_comp = gerar_rotulo_filtro(df_completo, filtros_ativos_comp, colunas_data, data_range_comp)
 
@@ -551,6 +542,11 @@ with st.sidebar:
                 if 'mes' in colunas_disponiveis: texto_default_base.append('mes')
                 if 'ano' in colunas_disponiveis: texto_default_base.append('ano')
                 
+                # Remove colunas que podem ser erroneamente inferidas como data/numérico, mas que devem ser texto
+                for col_name in ['mes', 'ano']:
+                    if col_name in colunas_disponiveis and col_name not in texto_default_base:
+                        texto_default_base.append(col_name)
+
                 texto_default = [col for col in colunas_disponiveis if col in texto_default_base]
 
                 if 'texto_select' not in st.session_state: 
@@ -625,6 +621,8 @@ else:
     st.header(f"📊 Dashboard Expert de Análise de Indicadores ({st.session_state.current_dataset_name})")
     
     colunas_categoricas_filtro = st.session_state.colunas_filtros_salvas
+    
+    # Colunas de data não são mais usadas para o SLIDER, mas ainda são necessárias para o rótulo
     _, colunas_data = encontrar_colunas_tipos(df_analise_completo) 
     
     st.markdown("#### 🔍 Configuração de Análise de Variação")
@@ -637,49 +635,19 @@ else:
     def render_filter_panel(tab_container, suffix, colunas_filtro_a_exibir, df_analise_base):
         
         current_active_filters_dict = {}
-        data_range = None
+        data_range = None # Garantimos que data_range seja None
         df_base_temp = df_analise_base.copy()
         
         with tab_container:
             
-            # FILTRO DE DATA (APENAS SE HOUVER COLUNA DE DATA DE VERDADE)
-            col_data_padrao = None
-            if colunas_data:
-                col_data_padrao = colunas_data[0]
-                df_col_data = df_analise_base[col_data_padrao].dropna()
-                
-                if not df_col_data.empty:
-                    data_series = pd.to_datetime(df_col_data, errors='coerce').dropna()
-                    
-                    if not data_series.empty:
-                        data_min_df = data_series.min()
-                        data_max_df = data_series.max()
-                        
-                        if pd.notna(data_min_df) and pd.notna(data_max_df):
-                            data_range_key = f'date_range_key_{suffix}_{col_data_padrao}'
-                            initial_default_range = (data_min_df.to_pydatetime(), data_max_df.to_pydatetime())
-                            if data_range_key not in st.session_state: 
-                                st.session_state[data_range_key] = initial_default_range
-                            
-                            current_value = st.session_state[data_range_key]
-                            
-                            data_range = st.slider(f"Data - {suffix.upper()}: {col_data_padrao.replace('_', ' ').title()}", 
-                                                    min_value=data_min_df.to_pydatetime(), max_value=data_max_df.to_pydatetime(), 
-                                                    value=current_value, format="YYYY/MM/DD", key=data_range_key)
-                            
-                            if data_range[0] > data_min_df.to_pydatetime() or data_range[1] < data_max_df.to_pydatetime():
-                                df_base_temp[col_data_padrao] = pd.to_datetime(df_base_temp[col_data_padrao], errors='coerce')
-                                df_base_temp = df_base_temp[
-                                    (df_base_temp[col_data_padrao] >= pd.to_datetime(data_range[0])) &
-                                    (df_base_temp[col_data_padrao] <= pd.to_datetime(data_range[1]))
-                                ]
-
-            st.markdown("---")
+            # BLOCO DE FILTRO DE DATA (SLIDER) REMOVIDO PARA USAR APENAS MULTISELECTS
+            
             st.markdown("##### Filtros Categóricos")
             cols_container = st.columns(3) 
             
+            # Definição da ordem de prioridade para melhor visualização
             colunas_ordenadas = []
-            priority_cols = ['emp', 'tipo_processo', 't', 'ano', 'mes'] # Adicionado 'ano' e 'mes'
+            priority_cols = ['emp', 'tipo_processo', 't', 'ano', 'mes'] 
             employee_col = 'nome_funcionario' 
             
             for col in colunas_filtro_a_exibir:
@@ -697,40 +665,38 @@ else:
                 with cols_container[i % 3]:
                     filtro_key = f'filtro_key_{suffix}_{col}'
                     
-                    opcoes_unicas_temp = sorted(df_base_temp[col].astype(str).fillna('N/A').unique().tolist())
+                    # Usamos o DF COMPLETO para obter as opções únicas para que o filtro não "suma"
+                    opcoes_unicas_full = sorted(df_analise_base[col].astype(str).fillna('N/A').unique().tolist())
                     
                     if filtro_key not in st.session_state:
                          st.session_state[filtro_key] = [] 
                     
                     current_default = st.session_state.get(filtro_key, [])
                     
-                    safe_default = [opt for opt in current_default if opt in opcoes_unicas_temp]
+                    safe_default = [opt for opt in current_default if opt in opcoes_unicas_full]
                     st.session_state[filtro_key] = safe_default 
 
                     is_filtered = len(safe_default) > 0
-                    is_all_selected = len(safe_default) == len(opcoes_unicas_temp)
+                    is_all_selected = len(safe_default) == len(opcoes_unicas_full)
                     
                     label_status = "- ATIVO" if is_filtered and not is_all_selected else ("- INATIVO" if not is_filtered else "- TOTAL")
 
-                    with st.expander(f"**{col.replace('_', ' ').title()}** ({len(opcoes_unicas_temp)} opções) {label_status}", expanded=False):
+                    with st.expander(f"**{col.replace('_', ' ').title()}** ({len(opcoes_unicas_full)} opções) {label_status}", expanded=False):
                         col_sel_btn, col_clr_btn = st.columns(2)
-                        with col_sel_btn: st.button("✅ Selecionar Tudo", on_click=lambda c=col, s=suffix, ops=opcoes_unicas_temp: set_multiselect_all(c, s, ops), key=f'select_all_btn_{suffix}_{col}', use_container_width=True)
+                        with col_sel_btn: st.button("✅ Selecionar Tudo", on_click=lambda c=col, s=suffix, ops=opcoes_unicas_full: set_multiselect_all(c, s, ops), key=f'select_all_btn_{suffix}_{col}', use_container_width=True)
                         with col_clr_btn: st.button("🗑️ Limpar (Nenhum)", on_click=lambda c=col, s=suffix: set_multiselect_none(c, s), key=f'select_none_btn_{suffix}_{col}', use_container_width=True)
                         st.markdown("---") 
                         
-                        # Garante que os meses e anos sejam exibidos na ordem correta se forem numéricos
-                        if col in ['mes', 'ano'] and all(item.isdigit() or item == 'N/A' for item in opcoes_unicas_temp):
-                            # Ordena numericamente, colocando 'N/A' por último
-                            opcoes_unicas_temp.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
+                        # Ordenação numérica para Mês e Ano
+                        if col in ['mes', 'ano'] and all(item.isdigit() or item == 'N/A' for item in opcoes_unicas_full):
+                            opcoes_unicas_full.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
                         
-                        selecao_form = st.multiselect("Selecione:", options=opcoes_unicas_temp, default=safe_default, key=filtro_key, label_visibility="collapsed")
+                        selecao_form = st.multiselect("Selecione:", options=opcoes_unicas_full, default=safe_default, key=filtro_key, label_visibility="collapsed")
                         current_active_filters_dict[col] = selecao_form
-                    
-                    if selecao_form and len(selecao_form) > 0 and len(selecao_form) < len(opcoes_unicas_temp):
-                        df_base_temp = df_base_temp[df_base_temp[col].astype(str).isin(selecao_form)]
             
-            return current_active_filters_dict, data_range
-
+            return current_active_filters_dict, data_range # data_range é None
+    
+    # data_range_base_render e data_range_comp_render serão None
     filtros_ativos_base_render, data_range_base_render = render_filter_panel(tab_base, 'base', colunas_categoricas_filtro, df_analise_completo)
     filtros_ativos_comp_render, data_range_comp_render = render_filter_panel(tab_comparacao, 'comp', colunas_categoricas_filtro, df_analise_completo)
     
@@ -746,17 +712,15 @@ else:
     filtros_ativos_base_cache = st.session_state.active_filters_base
     filtros_ativos_comp_cache = st.session_state.active_filters_comp
     
-    data_range_base_cache = data_range_base_render
-    data_range_comp_cache = data_range_comp_render
-
+    # Passamos None para data_range_base_cache e data_range_comp_cache
     df_analise_base_filtrado, df_analise_comp_filtrado = aplicar_filtros_comparacao(
         df_analise_completo, 
         colunas_categoricas_filtro, 
         filtros_ativos_base_cache, 
         filtros_ativos_comp_cache, 
         colunas_data, 
-        data_range_base_cache, 
-        data_range_comp_cache,
+        None, # data_range_base_cache 
+        None, # data_range_comp_cache
         st.session_state['filtro_reset_trigger']
     )
     st.session_state.df_filtrado_base = df_analise_base_filtrado
@@ -776,8 +740,8 @@ else:
             filtros_ativos_base_cache, 
             filtros_ativos_comp_cache, 
             colunas_data, 
-            data_range_base_cache, 
-            data_range_comp_cache
+            None, # data_range_base_cache
+            None  # data_range_comp_cache
         )
     else:
         st.warning("Um ou ambos os DataFrames (Base/Comparação) estão vazios após a aplicação dos filtros. Ajuste seus critérios e clique em 'Aplicar Filtros'.")
