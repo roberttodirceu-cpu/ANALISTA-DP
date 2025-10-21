@@ -1,5 +1,4 @@
-# app.py - Versão CORRIGIDA
-# Adicionado forçar 'nome_funcionario' para lista de texto durante a configuração.
+# app.py
 
 import streamlit as st
 import pandas as pd
@@ -32,7 +31,7 @@ PERSISTENCE_PATH = 'data/data_sets_catalog.pkl'
 
 # ==============================================================================
 # FUNÇÕES DE GERENCIAMENTO DE ESTADO E PERSISTÊNCIA
-# (Funções auxiliares omitidas para brevidade, mantendo-se inalteradas)
+# (Funções auxiliares mantidas)
 # ==============================================================================
 
 def load_catalog():
@@ -245,6 +244,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     # VERIFICAÇÃO DE FUNCIONÁRIOS ÚNICOS
     if col_func not in df_completo.columns:
         st.error(f"Erro Crítico: A coluna '{col_func}' não foi encontrada no DataFrame. Garanta que 'NOME FUNCIONARIO' foi selecionada como coluna de TEXTO no upload.")
+        # É seguro retornar aqui, pois o sidebar tem a lógica para tentar renomear e o erro é exibido.
         return
 
     def calcular_venc_desc(df):
@@ -257,8 +257,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         descontos = df_clean[df_clean[col_tipo_evento] == 'D'][col_valor].sum()
         liquido = vencimentos - descontos
         
-        # AQUI ESTÁ A CORREÇÃO DE SEGURANÇA: Contagem Única.
-        # Usa .dropna() para garantir que valores 'N/A' não sejam contados como um único funcionário.
+        # Lógica de contagem de Funcionários Únicos (tratando vazios)
         func_count = df[col_func].astype(str).str.strip().replace('', np.nan).dropna().nunique()
 
         return vencimentos, descontos, liquido, func_count
@@ -301,7 +300,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         delta=f"{delta_func_val} {delta_func_pct}"
     )
 
-    # ... (Restante dos KPIs são mantidos)
+    # KPI 2: Total de Vencimentos (Base)
     delta_venc_val, delta_venc_pct = get_delta(venc_comp, venc_base, is_currency=True)
     col2.metric(
         label=f"Total Vencimentos (Total: {formatar_moeda(venc_total)})", 
@@ -309,6 +308,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         delta=f"{delta_venc_val} {delta_venc_pct}"
     )
 
+    # KPI 3: Total de Descontos (Base)
     delta_desc_val, delta_desc_pct = get_delta(desc_comp, desc_base, is_currency=True)
     col3.metric(
         label=f"Total Descontos (Total: {formatar_moeda(desc_total)})", 
@@ -316,6 +316,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
         delta=f"{delta_desc_val} {delta_desc_pct}"
     )
     
+    # KPI 4: Líquido (Base)
     delta_liq_val, delta_liq_pct = get_delta(liq_comp, liq_base, is_currency=True)
     col4.metric(
         label=f"Valor Líquido (Total: {formatar_moeda(liq_total)})", 
@@ -339,7 +340,6 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     dados_resumo.append({'Métrica': 'TOTAL DE DESCONTOS (DÉBITO)', 'Total Geral': desc_total, 'Base (Filtrado)': desc_base, 'Comparação (Filtrado)': desc_comp, 'Tipo': 'Moeda'})
     dados_resumo.append({'Métrica': 'VALOR LÍQUIDO (Venc - Desc)', 'Total Geral': liq_total, 'Base (Filtrado)': liq_base, 'Comparação (Filtrado)': liq_comp, 'Tipo': 'Moeda'})
 
-    # ... (Restante da função de tabela mantida)
     colunas_moeda_outras = [col for col in st.session_state.colunas_valor_salvas if col not in ['valor']] 
     for col in colunas_moeda_outras:
         total_geral_soma = df_completo[col].sum()
@@ -400,7 +400,6 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
 
 # --- SIDEBAR (CONFIGURAÇÕES E UPLOAD) ---
 with st.sidebar:
-    # ... (Início do Sidebar e funções de gerenciamento mantidas)
     st.markdown("# 📊")
     st.title("⚙️ Configurações do Expert")
     
@@ -507,24 +506,40 @@ with st.sidebar:
                 st.error("O conjunto de dados consolidado está vazio.")
                 st.session_state.dados_atuais = pd.DataFrame() 
             else:
-                # Padronização de nomes de colunas
+                # Padronização de nomes de colunas (1ª tentativa de limpeza)
                 df_novo.columns = df_novo.columns.str.strip().str.lower().str.replace(' ', '_', regex=False)
+                
+                # --- CORREÇÃO CRÍTICA: GARANTE O NOME DA COLUNA DO FUNCIONÁRIO ---
+                # Procura por qualquer coluna que contenha 'nome' e 'func'
+                employee_col_candidates = [col for col in df_novo.columns if 'nome' in col and 'func' in col]
+                
+                # Se 'nome_funcionario' não está lá, mas temos um candidato:
+                if 'nome_funcionario' not in df_novo.columns and employee_col_candidates:
+                    # Renomeia o primeiro candidato encontrado para o nome padrão esperado
+                    df_novo.rename(columns={employee_col_candidates[0]: 'nome_funcionario'}, inplace=True)
+                    st.sidebar.info(f"Col. de Funcionário renomeada: '{employee_col_candidates[0]}' -> 'nome_funcionario'")
+                    
+                if 'nome_funcionario' not in df_novo.columns:
+                     st.sidebar.warning("Aviso: A coluna 'nome_funcionario' não foi encontrada após processamento. A contagem de funcionários pode ser imprecisa.")
+                # --- FIM DA CORREÇÃO CRÍTICA ---
+                
                 colunas_disponiveis = df_novo.columns.tolist()
                 st.info(f"Total de {len(df_novo)} linhas para configurar.")
                 
                 moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
                 if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', moeda_default)
                 
-                # CORREÇÃO CRÍTICA: Garante que 'nome_funcionario' é selecionado como texto
+                # Garante que 'nome_funcionario' está na lista de texto para ser processada corretamente
                 texto_default = [col for col in colunas_disponiveis if col in ['nr_func', 'nome_funcionario', 'emp', 'eve', 'seq', 't', 'tip', 'descricao_evento', 'tipo_processo']]
                 
-                # Se o estado de sessão já tem uma lista, a coluna 'nome_funcionario' deve ser adicionada se não estiver lá
                 if 'texto_select' not in st.session_state: 
                     initialize_widget_state('texto_select', texto_default)
                 else:
-                    if 'nome_funcionario' not in st.session_state.texto_select and 'nome_funcionario' in colunas_disponiveis:
-                         st.session_state.texto_select.append('nome_funcionario')
-                         st.session_state.texto_select = list(set(st.session_state.texto_select)) # Remove duplicatas
+                    if 'nome_funcionario' in colunas_disponiveis:
+                         current_list = st.session_state.texto_select
+                         if 'nome_funcionario' not in current_list:
+                            current_list.append('nome_funcionario')
+                         st.session_state.texto_select = list(set(current_list)) 
 
                 
                 st.markdown("##### 💰 Colunas de VALOR (R$)")
@@ -583,7 +598,6 @@ else:
     colunas_categoricas_filtro = st.session_state.colunas_filtros_salvas
     _, colunas_data = encontrar_colunas_tipos(df_analise_completo) 
     
-    # ... (Restante do Painel de Filtros mantido)
     st.markdown("#### 🔍 Configuração de Análise de Variação")
     col_reset_btn = st.columns([4, 1])[1]
     with col_reset_btn:
@@ -659,7 +673,6 @@ else:
                     
                     current_default = st.session_state.get(filtro_key, [])
                     
-                    # Garante que o default contém APENAS opções que existem nas opções filtradas (opcoes_unicas_temp)
                     safe_default = [opt for opt in current_default if opt in opcoes_unicas_temp]
                     st.session_state[filtro_key] = safe_default 
 
