@@ -505,29 +505,57 @@ with st.sidebar:
 
             # 2. Processa o(s) novo(s) arquivo(s)
             for file_name, file_bytes in st.session_state.uploaded_files_data.items():
-                df_temp = None # <--- CORREÇÃO CRÍTICA: Inicializa df_temp para evitar NameError
+                df_temp = None 
                 
                 try:
                     uploaded_file_stream = BytesIO(file_bytes)
                     
                     if file_name.endswith('.csv'):
-                        try:
-                            # Tenta ler com separador ';', decimal ','
-                            uploaded_file_stream.seek(0)
-                            df_temp = pd.read_csv(uploaded_file_stream, sep=';', decimal=',', encoding='utf-8')
-                        except Exception:
-                            uploaded_file_stream.seek(0)
-                            # Tenta ler com separador ',', decimal '.'
-                            df_temp = pd.read_csv(uploaded_file_stream, sep=',', decimal='.', encoding='utf-8')
+                        # Tentativas de leitura de CSV (mais robusto)
+                        reading_attempts = [
+                            {'sep': ';', 'decimal': ',', 'encoding': 'utf-8'},
+                            {'sep': ';', 'decimal': ',', 'encoding': 'latin-1'},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'utf-8'},
+                            {'sep': ',', 'decimal': '.', 'encoding': 'latin-1'},
+                        ]
+                        
+                        success = False
+                        for attempt in reading_attempts:
+                            try:
+                                uploaded_file_stream.seek(0)
+                                df_temp = pd.read_csv(uploaded_file_stream, **attempt)
+                                
+                                # Verifica se a leitura resultou em um DF utilizável (mais de 1 coluna)
+                                if df_temp.shape[1] > 1 and not df_temp.empty:
+                                    st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso: sep='{attempt['sep']}', decimal='{attempt['decimal']}', encoding='{attempt['encoding']}'")
+                                    success = True
+                                    break # Sai do loop de tentativas se for bem-sucedido
+                                else:
+                                    # Se resultou em 1 coluna ou está vazio, pode ser a leitura errada, tenta a próxima
+                                    df_temp = None 
+
+                            except Exception:
+                                # Apenas continua para a próxima tentativa
+                                pass 
+                                
+                        if not success:
+                            st.error(f"Falha CRÍTICA ao ler o arquivo CSV '{file_name}'. Nenhuma das 4 tentativas de separador/decimal/encoding funcionou. Ele será ignorado.")
+
+                                
                     elif file_name.endswith('.xlsx'):
-                        df_temp = pd.read_excel(uploaded_file_stream)
+                        try:
+                            df_temp = pd.read_excel(uploaded_file_stream)
+                        except Exception as inner_e:
+                            st.error(f"Erro ao ler o XLSX '{file_name}': {inner_e}")
+                            
                     
-                    # CORREÇÃO: Verifica se df_temp foi definido e não está vazio
+                    # Verifica se df_temp foi definido e não está vazio
                     if df_temp is not None and not df_temp.empty: 
                         all_dataframes.append(df_temp)
-                        
+
                 except Exception as e:
-                    st.error(f"Erro ao ler o arquivo {file_name}. Ele será ignorado. Detalhe: {e}")
+                    # Captura erros inesperados que não sejam de leitura interna (Ex: BytesIO problem)
+                    st.error(f"Erro inesperado no processamento do arquivo {file_name}. Ele será ignorado. Detalhe: {e}")
                     pass 
 
             if all_dataframes:
@@ -549,13 +577,14 @@ with st.sidebar:
                     df_atual_base.columns = cleaned_columns_base
                     
                     # Concatena a base existente com o novo upload
+                    # Nota: O concat usa as colunas padronizadas da base e tenta mapear as do novo
                     df_novo = pd.concat([df_atual_base, df_novo_upload], ignore_index=True)
                     st.sidebar.info(f"CONCATENAÇÃO: {len(df_atual_base)} (Existente) + {len(df_novo_upload)} (Novo) = {len(df_novo)} linhas totais.")
                 else:
                     df_novo = df_novo_upload # Se não escolheu somar, o df_novo é apenas o upload.
             
             if df_novo.empty:
-                st.error("O conjunto de dados consolidado está vazio.")
+                st.error("O conjunto de dados consolidado está vazio. Verifique se os arquivos foram lidos corretamente acima.")
                 st.session_state.dados_atuais = pd.DataFrame() 
             else:
                 
