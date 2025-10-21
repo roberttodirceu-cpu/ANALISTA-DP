@@ -27,12 +27,10 @@ except ImportError:
 st.set_page_config(layout="wide", page_title="Sistema de Análise de Indicadores Expert")
 PERSISTENCE_PATH = 'data/data_sets_catalog.pkl'
 
-# --- Funções Auxiliares de Estado e Catálogo (Mantidas) ---
-# (load_catalog, save_catalog, switch_dataset, initialize_widget_state, remove_uploaded_file, show_reconfig_panel, processar_dados_atuais)
-# ... [Omitido por brevidade. Mantenha as funções da versão anterior aqui] ...
+# --- Funções Auxiliares de Estado e Catálogo ---
 
+# [Manter funções load_catalog, save_catalog, processar_dados_atuais, switch_dataset, etc. da versão anterior]
 def load_catalog():
-    """Tenta carregar o catálogo de datasets do arquivo de persistência."""
     if os.path.exists(PERSISTENCE_PATH):
         try:
             with open(PERSISTENCE_PATH, 'rb') as f:
@@ -42,7 +40,6 @@ def load_catalog():
     return {}
 
 def save_catalog(catalog):
-    """Salva o catálogo de datasets no arquivo de persistência."""
     try:
         os.makedirs(os.path.dirname(PERSISTENCE_PATH), exist_ok=True)
         with open(PERSISTENCE_PATH, 'wb') as f:
@@ -58,7 +55,7 @@ def limpar_filtros_salvos():
     st.session_state.df_filtrado_comp = st.session_state.dados_atuais.copy()
     st.session_state['filtro_reset_trigger'] += 1
     
-    # Limpa chaves de estado de widgets específicos para que eles voltem ao default (Vazio)
+    # Limpa chaves de estado de widgets específicos
     chaves_a_limpar = [
         key for key in st.session_state.keys() 
         if key.startswith('filtro_key_base_') or key.startswith('date_range_key_base_') or 
@@ -100,18 +97,6 @@ def switch_dataset(dataset_name):
 def show_reconfig_panel():
     st.session_state.show_reconfig_section = True
     
-def remove_uploaded_file(file_name):
-    if file_name in st.session_state.uploaded_files_data:
-        del st.session_state.uploaded_files_data[file_name]
-        st.session_state.dados_atuais = pd.DataFrame()
-        st.session_state.current_dataset_name = ""
-        st.session_state.show_reconfig_section = False
-        st.rerun() 
-        
-def initialize_widget_state(key, options, initial_default_calc):
-    if key not in st.session_state:
-        st.session_state[key] = initial_default_calc
-        
 def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name):
     base_name = dataset_name if dataset_name else f"Dataset Processado ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
         
@@ -132,6 +117,11 @@ def processar_dados_atuais(df_novo, colunas_filtros, colunas_valor, dataset_name
     st.session_state.cols_to_exclude_analysis = default_exclude
     
     return True, df_novo
+
+def initialize_widget_state(key, options, initial_default_calc):
+    if key not in st.session_state:
+        st.session_state[key] = initial_default_calc
+
 
 # --- Inicialização de Estado da Sessão ---
 if 'data_sets_catalog' not in st.session_state: st.session_state.data_sets_catalog = load_catalog()
@@ -174,9 +164,12 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
         # 1. Filtros Categóricos
         for col in col_filtros_list:
             selecao = filtros_ativos_dict.get(col)
-            # AQUI ESTÁ A MUDANÇA: O filtro só é aplicado se a seleção NÃO estiver vazia.
-            if selecao and col in df_filtrado_temp.columns and len(selecao) > 0: 
+            opcoes_unicas = df_base[col].astype(str).fillna('N/A').unique().tolist()
+            
+            # CORREÇÃO: Aplica filtro SOMENTE se a seleção não estiver vazia E não for total
+            if selecao and col in df_filtrado_temp.columns and len(selecao) > 0 and len(selecao) < len(opcoes_unicas): 
                 df_filtrado_temp = df_filtrado_temp[df_filtrado_temp[col].astype(str).isin(selecao)]
+            # Se a seleção for vazia (default) ou total, o filtro é ignorado para essa coluna.
         
         # 2. Filtro de Data
         if data_range and len(data_range) == 2 and col_data and col_data[0] in df_filtrado_temp.columns:
@@ -187,7 +180,9 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
             data_max_df = df_base[col_data_padrao].max()
             
             # Aplica filtro de data APENAS se o intervalo selecionado for diferente do intervalo total do DF
-            if (pd.to_datetime(data_range[0]) > pd.to_datetime(data_min_df)) or (pd.to_datetime(data_range[1]) < pd.to_datetime(data_max_df)):
+            # A diferença de 1 segundo é usada para evitar problemas de precisão.
+            if (pd.to_datetime(data_range[0]) > (pd.to_datetime(data_min_df) + pd.Timedelta(seconds=1))) or \
+               (pd.to_datetime(data_range[1]) < (pd.to_datetime(data_max_df) - pd.Timedelta(seconds=1))):
                 df_filtrado_temp = df_filtrado_temp[
                     (df_filtrado_temp[col_data_padrao] >= pd.to_datetime(data_range[0])) &
                     (df_filtrado_temp[col_data_padrao] <= pd.to_datetime(data_range[1]))
@@ -200,7 +195,7 @@ def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtro
     return df_base_filtrado, df_comp_filtrado
 
 
-# --- NOVO: FUNÇÃO PARA TABELA DE RESUMO E MÉTRICAS "EXPERT" ---
+# --- FUNÇÃO PARA TABELA DE RESUMO E MÉTRICAS "EXPERT" (Mantida para visualização) ---
 
 def gerar_analise_expert(df_completo, df_base, df_comp):
     """
@@ -290,7 +285,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp):
         kpi_moeda_data = df_resumo[df_resumo['Métrica'] == f"SOMA: {colunas_moeda[0].upper()}"].iloc[0]
         
         delta_val = kpi_moeda_data['Comparação (Filtrado)'] - kpi_moeda_data['Base (Filtrado)']
-        delta_str = formatar_moeda(delta_val).replace("R$", "") # Remove o R$ para o delta
+        delta_str = formatar_moeda(delta_val).replace("R$", "") 
         
         col_kpi[1].metric(
             label=f"Soma Total ({colunas_moeda[0].replace('_', ' ').title()})", 
@@ -355,7 +350,7 @@ def gerar_analise_expert(df_completo, df_base, df_comp):
 
 # --- SIDEBAR (CONFIGURAÇÕES E UPLOAD) ---
 with st.sidebar:
-    # ... [Omitido por brevidade. Mantenha o código completo do sidebar da versão anterior aqui] ...
+    # ... [Manter o código completo do sidebar da versão anterior aqui] ...
     st.markdown("# 📊")
     st.title("⚙️ Configurações do Expert")
     
@@ -575,14 +570,14 @@ else:
                     opcoes_unicas = sorted(df_analise_base[col].astype(str).fillna('N/A').unique().tolist())
                     filtro_key = f'filtro_key_{suffix}_{col}'
                     
-                    # CORREÇÃO CRÍTICA: Inicializa com lista VAZIA (nenhum selecionado)
+                    # CORREÇÃO CRÍTICA: Inicializa com lista VAZIA se não houver estado anterior.
                     if filtro_key not in st.session_state:
                          st.session_state[filtro_key] = [] 
 
                     is_filtered = len(st.session_state.get(filtro_key, [])) > 0
                     is_all_selected = len(st.session_state.get(filtro_key, [])) == len(opcoes_unicas)
                     
-                    label_status = "- ATIVO" if is_filtered and not is_all_selected else ("- TOTAL" if not is_filtered or is_all_selected else "")
+                    label_status = "- ATIVO" if is_filtered and not is_all_selected else ("- INATIVO" if not is_filtered else "- TOTAL")
 
                     with st.expander(f"**{col.replace('_', ' ').title()}** ({len(opcoes_unicas)} opções) {label_status}", expanded=False):
                         col_sel_btn, col_clr_btn = st.columns(2)
@@ -590,7 +585,7 @@ else:
                         with col_clr_btn: st.button("🗑️ Limpar (Nenhum)", on_click=lambda c=col, s=suffix: set_multiselect_none(c, s), key=f'select_none_btn_{suffix}_{col}', use_container_width=True)
                         st.markdown("---") 
                         
-                        # Usa o estado da sessão como valor padrão
+                        # Usa o estado da sessão como valor padrão (inicia vazio)
                         selecao_form = st.multiselect("Selecione:", options=opcoes_unicas, default=st.session_state.get(filtro_key, []), key=filtro_key, label_visibility="collapsed")
                         current_active_filters_dict[col] = selecao_form
             
