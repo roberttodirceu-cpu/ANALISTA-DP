@@ -358,7 +358,7 @@ with st.sidebar:
                                             )
                                         except Exception as e5:
                                             
-                                            # TENTATIVA 6 (NOVA E AGRESSIVA): Pula linhas malformadas, motor Python/UTF-8
+                                            # TENTATIVA 6: Pula linhas malformadas, motor Python/UTF-8
                                             try:
                                                 uploaded_file_stream.seek(0)
                                                 df_temp = pd.read_csv(
@@ -368,18 +368,28 @@ with st.sidebar:
                                                     skipinitialspace=True,
                                                     engine='python', 
                                                     quoting=csv.QUOTE_MINIMAL,
-                                                    on_bad_lines='skip' # Ignora linhas com número de colunas inconsistente
+                                                    on_bad_lines='skip' 
                                                 )
                                             except Exception as e6:
-                                                # Falha total
-                                                st.error(f"""
-                                                    Falha total ao ler o arquivo {file_name}.
-                                                    Detalhes: A leitura falhou após 6 tentativas. Isso indica um problema grave de formatação.
-                                                    **Por favor, verifique se:**
-                                                    1. O delimitador é **ponto-e-vírgula (;)**.
-                                                    2. O arquivo está em um formato CSV *válido* (sem quebras de linha inesperadas nos dados).
-                                                """)
-                                                df_temp = None
+                                                
+                                                # TENTATIVA 7 (NOVA): Python Engine, Latin-1, Sem Quoting (mais tolerante a aspas malucas)
+                                                try:
+                                                    uploaded_file_stream.seek(0)
+                                                    df_temp = pd.read_csv(
+                                                        uploaded_file_stream, 
+                                                        sep=';', 
+                                                        encoding='latin-1', 
+                                                        skipinitialspace=True,
+                                                        engine='python', 
+                                                        # Remoção explícita de quoting e on_bad_lines
+                                                    )
+                                                except Exception as e7:
+                                                    # Falha total
+                                                    st.error(f"""
+                                                        Falha total ao ler o arquivo {file_name}.
+                                                        Detalhes: A leitura falhou após 7 tentativas. A causa mais provável é a inconsistência na estrutura do CSV ou a falta de um delimitador de texto claro.
+                                                    """)
+                                                    df_temp = None
                                         
                     elif file_name.endswith('.xlsx'):
                         df_temp = pd.read_excel(uploaded_file_stream)
