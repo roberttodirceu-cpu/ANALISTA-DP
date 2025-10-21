@@ -1,4 +1,4 @@
-# app.py - VERSÃO FINAL INTEGRADA COM LIMPEZA ROBUSTA E FILTROS CORRIGIDOS
+# app.py - Versão FINAL com Limpeza Agressiva de Colunas e APENAS Filtros Categóricos (Multiselect)
 
 import streamlit as st
 import pandas as pd
@@ -11,7 +11,6 @@ import pickle
 
 # ==============================================================================
 # IMPORTAÇÃO DE FUNÇÕES ESSENCIAIS DO UTILS.PY
-# (O utils.py fornecido anteriormente deve estar no mesmo diretório)
 # ==============================================================================
 try:
     from utils import (
@@ -32,7 +31,6 @@ PERSISTENCE_PATH = 'data/data_sets_catalog.pkl'
 
 # ==============================================================================
 # FUNÇÕES DE GERENCIAMENTO DE ESTADO E PERSISTÊNCIA
-# (Sem alterações em relação ao último código que você enviou, mantendo a originalidade)
 # ==============================================================================
 
 def load_catalog():
@@ -165,7 +163,7 @@ if 'cols_to_exclude_analysis' not in st.session_state:
 @st.cache_data(show_spinner="Aplicando filtros de Base e Comparação...")
 def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtros_ativos_comp, col_data, data_range_base, data_range_comp, trigger):
     
-    # data_range_base e data_range_comp são None, pois o slider foi removido.
+    # OBS: data_range_base e data_range_comp serão None, pois o slider foi removido.
     # O filtro de data só será aplicado se os filtros categóricos MES e ANO forem usados.
 
     def _aplicar_filtro_single(df, col_filtros_list, filtros_ativos_dict):
@@ -461,10 +459,10 @@ with st.sidebar:
         st.markdown("---")
         st.markdown("##### Arquivos Pendentes para Processamento:")
         st.button("🔁 Reconfigurar e Processar", 
-                     on_click=show_reconfig_panel,
-                     key='reconfig_btn_sidebar',
-                     use_container_width=True,
-                     type='primary')
+                  on_click=show_reconfig_panel,
+                  key='reconfig_btn_sidebar',
+                  use_container_width=True,
+                  type='primary')
         st.markdown("---")
         
         if st.session_state.show_reconfig_section:
@@ -484,7 +482,7 @@ with st.sidebar:
                             df_temp = pd.read_csv(uploaded_file_stream, sep=',', decimal='.', encoding='utf-8')
                     elif file_name.endswith('.xlsx'):
                         df_temp = pd.read_excel(uploaded_file_stream)
-                        
+                    
                     if not df_temp.empty:
                         all_dataframes.append(df_temp)
                         
@@ -500,10 +498,7 @@ with st.sidebar:
                 st.session_state.dados_atuais = pd.DataFrame() 
             else:
                 
-                # ======================================================================================
-                # >>> PONTO DE INTEGRAÇÃO 1: INSERÇÃO DA ROTINA DE LIMPEZA ROBUSTA DE COLUNAS <<<
-                # ======================================================================================
-                
+                # --- CORREÇÃO DE LIMPEZA MAIS ROBUSTA (Padronização de Colunas) ---
                 raw_columns = df_novo.columns.copy()
                 
                 # Limpeza agressiva: strip, lower, remover acentos e substituir tudo que não é letra/número por underscore
@@ -533,9 +528,7 @@ with st.sidebar:
                     else:
                         st.sidebar.warning("Aviso: Não foi possível identificar a coluna de nome de funcionário automaticamente.")
                         
-                # ======================================================================================
-                # >>> FIM DA INTEGRAÇÃO 1 <<<
-                # ======================================================================================
+                # --- FIM DA CORREÇÃO CRÍTICA ---
                 
                 st.info(f"Total de {len(df_novo)} linhas para configurar.")
                 
@@ -639,9 +632,6 @@ else:
     
     tab_base, tab_comparacao = st.tabs(["Filtros da BASE (Referência)", "Filtros de COMPARAÇÃO (Alvo)"])
 
-    # ======================================================================================
-    # >>> PONTO DE INTEGRAÇÃO 2: CORREÇÃO COMPLETA DA FUNÇÃO render_filter_panel <<<
-    # ======================================================================================
     def render_filter_panel(tab_container, suffix, colunas_filtro_a_exibir, df_analise_base):
         
         current_active_filters_dict = {}
@@ -675,81 +665,88 @@ else:
                 with cols_container[i % 3]:
                     filtro_key = f'filtro_key_{suffix}_{col}'
                     
-                    # 1. Usamos o DF COMPLETO para obter as opções únicas
-                    opcoes_unicas = df_analise_base[col].astype(str).fillna('N/A').unique().tolist()
-                    opcoes_unicas.sort() # Ordenação para melhor UX
+                    # Usamos o DF COMPLETO para obter as opções únicas para que o filtro não "suma"
+                    opcoes_unicas_full = sorted(df_analise_base[col].astype(str).fillna('N/A').unique().tolist())
                     
-                    # Define o default: se a chave não existir no session_state, usa todas as opções.
-                    # Caso contrário, usa o valor salvo no session_state.
                     if filtro_key not in st.session_state:
-                        st.session_state[filtro_key] = opcoes_unicas
+                         st.session_state[filtro_key] = [] 
+                    
+                    current_default = st.session_state.get(filtro_key, [])
+                    
+                    safe_default = [opt for opt in current_default if opt in opcoes_unicas_full]
+                    st.session_state[filtro_key] = safe_default 
+
+                    is_filtered = len(safe_default) > 0
+                    is_all_selected = len(safe_default) == len(opcoes_unicas_full)
+                    
+                    label_status = "- ATIVO" if is_filtered and not is_all_selected else ("- INATIVO" if not is_filtered else "- TOTAL")
+
+                    with st.expander(f"**{col.replace('_', ' ').title()}** ({len(opcoes_unicas_full)} opções) {label_status}", expanded=False):
+                        col_sel_btn, col_clr_btn = st.columns(2)
+                        with col_sel_btn: st.button("✅ Selecionar Tudo", on_click=lambda c=col, s=suffix, ops=opcoes_unicas_full: set_multiselect_all(c, s, ops), key=f'select_all_btn_{suffix}_{col}', use_container_width=True)
+                        with col_clr_btn: st.button("🗑️ Limpar (Nenhum)", on_click=lambda c=col, s=suffix: set_multiselect_none(c, s), key=f'select_none_btn_{suffix}_{col}', use_container_width=True)
+                        st.markdown("---") 
                         
-                    # 2. Renderiza o multiselect
-                    selecao = st.multiselect(
-                        label=col.replace('_', ' ').title(),
-                        options=opcoes_unicas,
-                        default=st.session_state[filtro_key],
-                        key=filtro_key
-                    )
-                    
-                    # 3. Define o estado do filtro (usando o valor do widget)
-                    current_active_filters_dict[col] = selecao
-                    
-                    # 4. Renderiza botões auxiliares
-                    col_all, col_none = st.columns(2)
-                    with col_all:
-                        st.button("Tudo", 
-                                  key=f'all_btn_{filtro_key}', 
-                                  on_click=set_multiselect_all, 
-                                  args=(col, suffix, opcoes_unicas),
-                                  use_container_width=True)
-                    with col_none:
-                        st.button("Limpar", 
-                                  key=f'none_btn_{filtro_key}', 
-                                  on_click=set_multiselect_none, 
-                                  args=(col, suffix,),
-                                  use_container_width=True)
-
-
-        # Salva os filtros ativos no estado da sessão (fora do loop e do 'with tab_container')
-        if suffix == 'base':
-            st.session_state.active_filters_base = current_active_filters_dict
-        elif suffix == 'comp':
-            st.session_state.active_filters_comp = current_active_filters_dict
+                        # Ordenação numérica para Mês e Ano
+                        if col in ['mes', 'ano'] and all(item.isdigit() or item == 'N/A' for item in opcoes_unicas_full):
+                            opcoes_unicas_full.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
+                        
+                        selecao_form = st.multiselect("Selecione:", options=opcoes_unicas_full, default=safe_default, key=filtro_key, label_visibility="collapsed")
+                        current_active_filters_dict[col] = selecao_form
             
-        return data_range # data_range é sempre None
-    # ======================================================================================
-    # >>> FIM DA INTEGRAÇÃO 2 <<<
-    # ======================================================================================
-
-    # Aplica os filtros na interface e coleta o estado atual
-    data_range_base = render_filter_panel(tab_base, 'base', colunas_categoricas_filtro, df_analise_completo)
-    data_range_comp = render_filter_panel(tab_comparacao, 'comp', colunas_categoricas_filtro, df_analise_completo)
+            return current_active_filters_dict, data_range # data_range é None
     
+    # data_range_base_render e data_range_comp_render serão None
+    filtros_ativos_base_render, data_range_base_render = render_filter_panel(tab_base, 'base', colunas_categoricas_filtro, df_analise_completo)
+    filtros_ativos_comp_render, data_range_comp_render = render_filter_panel(tab_comparacao, 'comp', colunas_categoricas_filtro, df_analise_completo)
     
-    # Executa a filtragem principal usando a função cacheada
-    df_filtrado_base, df_filtrado_comp = aplicar_filtros_comparacao(
-        df_analise_completo,
-        colunas_categoricas_filtro,
-        st.session_state.active_filters_base,
-        st.session_state.active_filters_comp,
-        colunas_data, # Data cols (não usado para range)
-        data_range_base, # None
-        data_range_comp, # None
-        st.session_state['filtro_reset_trigger'] # Trigger
-    )
+    st.session_state.active_filters_base = filtros_ativos_base_render
+    st.session_state.active_filters_comp = filtros_ativos_comp_render
     
-    st.session_state.df_filtrado_base = df_filtrado_base
-    st.session_state.df_filtrado_comp = df_filtrado_comp
+    st.markdown("---")
+    submitted = st.button("✅ Aplicar Filtros e Rodar Comparação", use_container_width=True, type='primary')
+    if submitted:
+        st.session_state['filtro_reset_trigger'] += 1 
+        st.rerun() 
+        
+    filtros_ativos_base_cache = st.session_state.active_filters_base
+    filtros_ativos_comp_cache = st.session_state.active_filters_comp
     
-    # Chamada final para a análise e exibição dos resultados
-    gerar_analise_expert(
+    # Passamos None para data_range_base_cache e data_range_comp_cache
+    df_analise_base_filtrado, df_analise_comp_filtrado = aplicar_filtros_comparacao(
         df_analise_completo, 
-        df_filtrado_base, 
-        df_filtrado_comp, 
-        st.session_state.active_filters_base, 
-        st.session_state.active_filters_comp,
+        colunas_categoricas_filtro, 
+        filtros_ativos_base_cache, 
+        filtros_ativos_comp_cache, 
         colunas_data, 
-        data_range_base, 
-        data_range_comp
+        None, # data_range_base_cache 
+        None, # data_range_comp_cache
+        st.session_state['filtro_reset_trigger']
     )
+    st.session_state.df_filtrado_base = df_analise_base_filtrado
+    st.session_state.df_filtrado_comp = df_analise_comp_filtrado
+    
+    df_base_safe = st.session_state.df_filtrado_base.copy() if not st.session_state.df_filtrado_base.empty else pd.DataFrame(columns=df_analise_completo.columns)
+    df_comp_safe = st.session_state.df_filtrado_comp.copy() if not st.session_state.df_filtrado_comp.empty else pd.DataFrame(columns=df_analise_completo.columns)
+
+
+    st.subheader("🌟 Resumo de Métricas e Análise de Variação - Visão Expert")
+    
+    if not df_base_safe.empty or not df_comp_safe.empty:
+        gerar_analise_expert(
+            df_analise_completo, 
+            df_base_safe, 
+            df_comp_safe, 
+            filtros_ativos_base_cache, 
+            filtros_ativos_comp_cache, 
+            colunas_data, 
+            None, # data_range_base_cache
+            None  # data_range_comp_cache
+        )
+    else:
+        st.warning("Um ou ambos os DataFrames (Base/Comparação) estão vazios após a aplicação dos filtros. Ajuste seus critérios e clique em 'Aplicar Filtros'.")
+
+    st.markdown("---")
+    
+    st.subheader("📚 Detalhe dos Dados Filtrados (Base)")
+    st.dataframe(df_base_safe, use_container_width=True)
