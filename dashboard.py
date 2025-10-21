@@ -1,4 +1,4 @@
-# app.py - Versão FINAL com CORREÇÃO CRÍTICA (Processamento Individual de Colunas)
+# app.py - Versão FINAL e COMPLETA com Correções de Conciliação e Colunas
 
 import streamlit as st
 import pandas as pd
@@ -12,9 +12,8 @@ import re
 import unicodedata
 
 # ==============================================================================
-# IMPORTAÇÃO DE FUNÇÕES ESSENCIAIS DO UTILS.PY
+# FUNÇÕES ESSENCIAIS (Simuladas - Usar o utils.py se fosse ambiente de produção)
 # ==============================================================================
-# Funções simuladas para garantir que o código rode mesmo sem o utils.py
 def formatar_moeda(valor): 
     # Tenta lidar com NaN
     if pd.isna(valor): return "R$ 0,00"
@@ -95,14 +94,11 @@ def gerar_rotulo_filtro(df_completo, filtros_ativos, colunas_data, data_range):
 
     return "<br>".join(rotulo)
 
-def verificar_ausentes(df): return {} # Simplificação para o app.py
-
 
 # ==============================================================================
 
 # --- Configuração da Página e Persistência ---
 st.set_page_config(layout="wide", page_title="Sistema de Análise de Indicadores Expert")
-# Nota: O caminho de persistência deve ser alterado se você não estiver usando o ambiente padrão do Streamlit
 PERSISTENCE_PATH = 'data/data_sets_catalog.pkl' 
 
 # ==============================================================================
@@ -133,6 +129,7 @@ def limpar_filtros_salvos():
     st.session_state.active_filters_comp = {}
     
     # Incrementa o trigger para forçar a reexecução e recálculo dos filtros cacheados
+    if 'filtro_reset_trigger' not in st.session_state: st.session_state['filtro_reset_trigger'] = 0
     st.session_state['filtro_reset_trigger'] += 1
     
     # Limpa as chaves de sessão para os widgets de filtro e data
@@ -147,7 +144,7 @@ def limpar_filtros_salvos():
         except:
             pass
             
-    st.rerun() 
+    #st.rerun() # O st.rerun só é necessário se esta função for chamada fora de um fluxo que já causa rerender
 
 def set_multiselect_all(key, suffix, options_list):
     """Callback para o botão 'Selecionar Tudo'."""
@@ -171,6 +168,7 @@ def switch_dataset(dataset_name):
         st.session_state.cols_to_exclude_analysis = default_exclude
         
         limpar_filtros_salvos()
+        st.rerun() # Força a re-renderização com o novo dataset
     else:
         st.error(f"Dataset '{dataset_name}' não encontrado.")
 
@@ -212,6 +210,7 @@ initial_filters = []
 initial_values = []
 initial_name = ""
 if st.session_state.data_sets_catalog:
+    # Tenta carregar o último dataset salvo
     last_name = list(st.session_state.data_sets_catalog.keys())[-1]
     data = st.session_state.data_sets_catalog[last_name]
     initial_df = data['df']
@@ -238,8 +237,6 @@ if 'cols_to_exclude_analysis' not in st.session_state:
 @st.cache_data(show_spinner="Aplicando filtros de Base e Comparação...")
 def aplicar_filtros_comparacao(df_base, col_filtros, filtros_ativos_base, filtros_ativos_comp, col_data, data_range_base, data_range_comp, trigger):
     
-    # data_range_base e data_range_comp são passados como None (porque o slider foi removido)
-
     def _aplicar_filtro_single(df, col_filtros_list, filtros_ativos_dict):
         df_filtrado_temp = df.copy()
         
@@ -277,27 +274,21 @@ def calcular_venc_desc(df):
         
     df_clean = df.copy()
 
-    # <--- CORREÇÃO CRÍTICA DO TypeError: Garantir que a coluna 'valor' é numérica --->
+    # CRÍTICO: Garantir que a coluna 'valor' é numérica para a soma
     try:
-        # Força a coluna 'valor' a ser numérica, transformando valores inválidos (strings, etc.) em NaN, 
-        # e depois preenche NaN com 0 para que a soma funcione corretamente.
         df_clean[col_valor] = pd.to_numeric(df_clean[col_valor], errors='coerce').fillna(0)
     except Exception as e:
-        # Se falhar, retorna 0 para evitar quebra total do app
         st.warning(f"Falha crítica ao forçar coluna 'valor' para numérico na análise: {e}")
         return 0, 0, 0, 0
-    # <--- FIM DA CORREÇÃO CRÍTICA --->
 
     df_clean = df_clean.dropna(subset=[col_valor, col_tipo_evento])
 
     vencimentos = df_clean[df_clean[col_tipo_evento] == 'C'][col_valor].sum()
     descontos = df_clean[df_clean[col_tipo_evento] == 'D'][col_valor].sum()
     
-    # Esta subtração agora é segura, pois vencimentos e descontos são resultados de .sum() em uma coluna float.
     liquido = vencimentos - descontos 
     
-    # Lógica de contagem de Funcionários Únicos
-    # A contagem SÓ deve ocorrer se a coluna existir, caso contrário, será 0 (para os dados sem essa coluna)
+    # Lógica de contagem de Funcionários Únicos (0 se a coluna não existir)
     if col_func not in df_clean.columns:
          func_count = 0
     else:
@@ -311,20 +302,17 @@ def gerar_analise_expert(df_completo, df_base, df_comp, filtros_ativos_base, fil
     colunas_valor_salvas = st.session_state.colunas_valor_salvas
     
     # -------------------------------------------------------------
-    # 0. VERIFICAÇÃO CRÍTICA DE COLUNA (Aviso Graceful, não Hard Stop)
+    # 0. VERIFICAÇÃO CRÍTICA DE COLUNA (Aviso Graceful)
     # -------------------------------------------------------------
     col_func = 'nome_funcionario'
     if col_func not in df_completo.columns:
-        # APRESENTA O ERRO VISÍVEL AO USUÁRIO NO DASHBOARD, mas DEIXA o resto rodar
         st.error(f"Aviso Crítico: A coluna '{col_func}' não foi encontrada no Dataset Ativo. A contagem de funcionários únicos será 0. Por favor, re-processe seu arquivo de Folha contendo esta coluna.")
-        st.markdown(f"Colunas atuais no Dataset: {df_completo.columns.tolist()}")
 
     # -------------------------------------------------------------
     # 1. ANÁLISE DE CONTEXTO E RÓTULOS DETALHADOS
     # -------------------------------------------------------------
     st.markdown("#### 📝 Contexto do Filtro Ativo")
     
-    # A função gerar_rotulo_filtro foi ajustada para aceitar None para data_range
     rotulo_base = gerar_rotulo_filtro(df_completo, filtros_ativos_base, colunas_data, data_range_base)
     rotulo_comp = gerar_rotulo_filtro(df_completo, filtros_ativos_comp, colunas_data, data_range_comp)
 
@@ -506,13 +494,14 @@ with st.sidebar:
         st.info("Estado da sessão limpo! Recarregando...")
         st.rerun()
 
-    # Seção 1: Trocar Dataset Ativo (Aparece SOMENTE se houver dados salvos)
+    # Seção 1: Trocar Dataset Ativo (Botão que o usuário estava procurando)
     if st.session_state.data_sets_catalog:
         st.header("1. Trocar Dataset Ativo")
         dataset_names = list(st.session_state.data_sets_catalog.keys())
         
         current_index = dataset_names.index(st.session_state.current_dataset_name) if st.session_state.current_dataset_name in dataset_names else 0
         
+        # O seletor (selectbox) funciona como os 'botões de cadastro' que você mencionou
         selected_name = st.selectbox(
             "Selecione o Dataset Ativo:", 
             options=dataset_names, 
@@ -578,12 +567,8 @@ with st.sidebar:
         # Este é o painel de configuração que aparece APÓS o clique no botão acima ou após um upload
         if st.session_state.show_reconfig_section:
             
-            # Se não houver dados, mas show_reconfig_section for True (erro de estado), forçamos o DF a ser criado
             df_novo = pd.DataFrame()
             all_dataframes = []
-            
-            # --- LÓGICA DE CARREGAMENTO PARA CONCATENAÇÃO (SOMA DE DADOS) ---
-            df_atual_base = pd.DataFrame()
             target_col = 'nome_funcionario' # Coluna alvo
             dataset_name_to_use = st.session_state.get('current_dataset_name_input', f"Dataset Processado ({datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
@@ -609,6 +594,7 @@ with st.sidebar:
                 dataset_name_to_use = st.session_state.get('current_dataset_name_input')
 
             # 1. Tenta carregar o dataset ATIVO ESCOLHIDO para soma
+            df_atual_base = pd.DataFrame()
             if selected_dataset_to_sum != "Criar Novo Dataset (Substituir/Criar)":
                 if dataset_name_to_use in st.session_state.data_sets_catalog:
                     df_atual_base = st.session_state.data_sets_catalog[dataset_name_to_use]['df'].copy()
@@ -622,16 +608,13 @@ with st.sidebar:
                     if target_col not in df_atual_base.columns:
                          employee_col_candidates_base = [col for col in cleaned_columns_base if 'nome' in col and 'func' in col]
                          if employee_col_candidates_base:
-                             # Se o nome existe mas não está padronizado (erro improvável agora, mas garante)
                              df_atual_base.rename(columns={employee_col_candidates_base[0]: target_col}, inplace=True)
                          else:
-                             # Se a coluna não existe no df base (por algum motivo), a cria com NaN para alinhamento
                              df_atual_base[target_col] = np.nan 
                     # ----------------------------------------------------
                     
             # 2. Processa o(s) novo(s) arquivo(s)
             if not st.session_state.uploaded_files_data:
-                # Se o painel está aberto, mas não há dados pendentes, é um erro de estado ou uma reconfiguração da base atual
                 st.warning("Nenhum novo arquivo detectado para processamento.")
                 
             else:
@@ -642,20 +625,13 @@ with st.sidebar:
                         uploaded_file_stream = BytesIO(file_bytes)
                         
                         if file_name.endswith('.csv'):
+                            # Lógica de leitura robusta para CSV (tentativas com diferentes separadores e encodings)
                             reading_attempts = [
                                 {'sep': ';', 'decimal': ',', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'},
-                                # CRÍTICO: Opções de skip row 1 para contornar lixo invisível
                                 {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': None, 'skiprows': 1},
                                 {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': None, 'skiprows': 1},
-                                
-                                # Outras combinações normais
                                 {'sep': ';', 'decimal': ',', 'encoding': 'latin-1', 'skipinitialspace': True, 'header': 'infer'},
                                 {'sep': ',', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'},
-                                {'sep': ',', 'decimal': '.', 'encoding': 'latin-1', 'skipinitialspace': True, 'header': 'infer'},
-                                {'sep': ';', 'decimal': ',', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': 'infer'},
-                                {'sep': ',', 'decimal': '.', 'encoding': 'iso-8859-1', 'skipinitialspace': True, 'header': 'infer'},
-                                {'sep': ';', 'decimal': '.', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'}, 
-                                {'sep': '\t', 'decimal': ',', 'encoding': 'utf-8', 'skipinitialspace': True, 'header': 'infer'}, 
                             ]
                             
                             success = False
@@ -674,7 +650,6 @@ with st.sidebar:
                                     
                                     if df_temp.shape[1] > 1 and not df_temp.empty:
                                         if skiprows_param == 1 and header_param is None:
-                                            # Se pulamos o cabeçalho, garantimos um nome de coluna
                                             df_temp.columns = [f'col_{i}' for i in range(len(df_temp.columns))]
                                             
                                         success = True
@@ -694,31 +669,27 @@ with st.sidebar:
                                 df_temp = pd.read_excel(uploaded_file_stream)
                                 if df_temp is not None and not df_temp.empty: 
                                     st.sidebar.success(f"Arquivo '{file_name}' lido com sucesso (Excel).")
-                            except ImportError:
-                                 st.error(f"Erro ao ler o XLSX '{file_name}': Missing optional dependency 'openpyxl'.")
                             except Exception as inner_e:
                                 st.error(f"Erro ao ler o XLSX '{file_name}': {inner_e}")
                                 
                         
                         if df_temp is not None and not df_temp.empty: 
                             
-                            # --- MODIFICAÇÃO CRÍTICA AQUI: Aplicar limpeza e renomeação por arquivo ---
+                            # --- CRÍTICO: Aplicar limpeza e alinhamento individual por arquivo ---
                             raw_columns = df_temp.columns.copy()
                             cleaned_columns = [limpar_nome_coluna(col) for col in raw_columns]
                             df_temp.columns = cleaned_columns
                             colunas_disponiveis = df_temp.columns.tolist()
 
                             if target_col not in colunas_disponiveis:
-                                # Tenta encontrar o nome de funcionário no arquivo atual
                                 employee_col_candidates = [col for col in colunas_disponiveis if 'nome' in col and 'func' in col]
 
                                 if employee_col_candidates:
                                     original_candidate = employee_col_candidates[0]
                                     df_temp.rename(columns={original_candidate: target_col}, inplace=True)
                                     st.sidebar.info(f"Col. de Funcionário renomeada: '{original_candidate}' -> '{target_col}' em {file_name}")
-                                    colunas_disponiveis = df_temp.columns.tolist() 
                                 else:
-                                    # CRÍTICO: Se não encontrar, adiciona a coluna vazia para alinhar na concatenação
+                                    # Se não encontrar, adiciona a coluna vazia (NaN) para alinhamento
                                     st.sidebar.warning(f"Aviso: Coluna '{target_col}' não encontrada em {file_name}. Criando coluna vazia.")
                                     df_temp[target_col] = np.nan
                             # ------------------------------------------------------------------------
@@ -735,7 +706,6 @@ with st.sidebar:
                     
                     # 3. Concatena o novo upload com o dataset base existente, se houver
                     if not df_atual_base.empty:
-                        # Concatena a base existente (já limpa e alinhada) com o novo upload (já limpo e alinhado)
                         df_novo = pd.concat([df_atual_base, df_novo_upload], ignore_index=True)
                         st.sidebar.info(f"CONCATENAÇÃO: {len(df_atual_base)} (Existente) + {len(df_novo_upload)} (Novo) = {len(df_novo)} linhas totais.")
                     else:
@@ -749,21 +719,19 @@ with st.sidebar:
                 colunas_disponiveis = df_novo.columns.tolist()
                 st.info(f"Total de {len(df_novo)} linhas para configurar.")
                 
+                # --- DEFINIÇÃO DE COLUNAS MOEDA/VALOR ---
                 moeda_default = [col for col in colunas_disponiveis if any(word in col for word in ['valor', 'salario', 'custo', 'receita', 'montante'])]
                 if 'moeda_select' not in st.session_state: initialize_widget_state('moeda_select', moeda_default)
                 
                 
                 # --- DEFINIÇÃO DE COLUNAS TEXTO (INCLUINDO MÊS E ANO) ---
-                texto_default_base = ['nr_func', 'nome_funcionario', 'emp', 'eve', 'seq', 't', 'tip', 'descricao_evento', 'tipo_processo']
-                
-                for col_name in ['mes', 'ano']:
-                    if col_name in colunas_disponiveis: texto_default_base.append(col_name)
-
+                texto_default_base = ['nr_func', 'nome_funcionario', 'emp', 'eve', 'seq', 't', 'tip', 'descricao_evento', 'tipo_processo', 'mes', 'ano']
                 texto_default = [col for col in colunas_disponiveis if col in texto_default_base]
 
                 if 'texto_select' not in st.session_state: 
                     initialize_widget_state('texto_select', texto_default)
                 else:
+                    # Garante que as colunas padrão sempre estejam na lista de seleção
                     current_list = st.session_state.texto_select
                     for col in texto_default:
                         if col in colunas_disponiveis and col not in current_list:
@@ -785,10 +753,7 @@ with st.sidebar:
                 colunas_para_filtro_options = df_processado.select_dtypes(include=['object', 'category']).columns.tolist()
                 
                 # --- DEFINIÇÃO DE FILTROS PADRÃO (INCLUINDO MÊS E ANO) ---
-                filtro_default_base = ['t', 'descricao_evento', 'nome_funcionario', 'emp', 'tipo_processo']
-                if 'mes' in colunas_para_filtro_options: filtro_default_base.append('mes')
-                if 'ano' in colunas_para_filtro_options: filtro_default_base.append('ano')
-                
+                filtro_default_base = ['t', 'descricao_evento', 'nome_funcionario', 'emp', 'tipo_processo', 'mes', 'ano']
                 filtro_default = [c for c in colunas_para_filtro_options if c in filtro_default_base]
                 
                 if 'filtros_select' not in st.session_state:
@@ -800,7 +765,8 @@ with st.sidebar:
                 colunas_valor_dashboard = df_processado.select_dtypes(include=np.number).columns.tolist()
                 st.markdown("---")
                 
-                if st.button("✅ Processar e Exibir Dados Atuais", key='processar_sidebar_btn'): 
+                # O botão de processamento final!
+                if st.button("✅ Processar e Exibir Dados Atuais", key='processar_sidebar_btn', type='primary'): 
                     if df_processado.empty:
                         st.error("O DataFrame está vazio após o processamento.")
                     elif not colunas_para_filtro:
@@ -818,7 +784,7 @@ with st.sidebar:
                         if sucesso:
                             st.success(f"Dataset '{st.session_state.current_dataset_name}' processado e salvo no catálogo!")
                             
-                            # CRÍTICO: Limpa os dados pendentes e esconde o painel de reconfiguração
+                            # Limpa os dados pendentes e esconde o painel de reconfiguração
                             st.session_state.uploaded_files_data = {} 
                             st.session_state.show_reconfig_section = False
                             
@@ -827,7 +793,6 @@ with st.sidebar:
                             st.rerun() 
             
     else: 
-        # Garante que o painel de reconfiguração esteja fechado se não houver arquivos pendentes
         st.session_state.show_reconfig_section = False 
         if not st.session_state.data_sets_catalog:
              st.info("Sistema pronto. O Dashboard será exibido após carregar, processar e selecionar um Dataset.")
@@ -845,10 +810,7 @@ else:
     
     colunas_categoricas_filtro = st.session_state.colunas_filtros_salvas
     
-    # Colunas de data não são usadas para o SLIDER, mas ainda são necessárias para o rótulo
     _, colunas_data = encontrar_colunas_tipos(df_analise_completo) 
-    
-    # Não há mais a VERIFICAÇÃO CRÍTICA de parada total aqui, apenas a lógica de análise que lida com a ausência.
     
     st.markdown("#### 🔍 Configuração de Análise de Variação")
     col_reset_btn = st.columns([4, 1])[1]
@@ -860,7 +822,7 @@ else:
     def render_filter_panel(tab_container, suffix, colunas_filtro_a_exibir, df_analise_base):
         
         current_active_filters_dict = {}
-        data_range = None # Garantimos que data_range seja None
+        data_range = None 
         
         with tab_container:
             
@@ -891,12 +853,10 @@ else:
                     opcoes_unicas_full = sorted(df_analise_base[col].astype(str).fillna('N/A').unique().tolist())
                     
                     if filtro_key not in st.session_state:
-                         # Inicializa com todas as opções selecionadas por default (nenhum filtro aplicado)
                          st.session_state[filtro_key] = opcoes_unicas_full 
                     
                     current_default = st.session_state.get(filtro_key, opcoes_unicas_full)
                     
-                    # Garantir que o default não tenha opções que sumiram (segurança)
                     safe_default = [opt for opt in current_default if opt in opcoes_unicas_full]
                     st.session_state[filtro_key] = safe_default 
 
@@ -923,7 +883,6 @@ else:
                             label_visibility="collapsed"
                         )
                     
-                    # Armazena a seleção para a função de caching e para o rótulo
                     if selected_options:
                         current_active_filters_dict[col] = selected_options
                         
