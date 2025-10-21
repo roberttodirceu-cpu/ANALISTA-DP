@@ -2,11 +2,19 @@
 
 import pandas as pd
 import numpy as np
+from datetime import datetime
 
 def formatar_moeda(valor):
     """Formata um valor float ou int para o formato monetário BRL."""
     if pd.isna(valor) or valor is None:
         return "R$ 0,00"
+    # Garante que o valor é um float antes de formatar
+    try:
+        valor = float(valor)
+    except:
+        return "R$ N/A"
+        
+    # Formatação com ponto como separador de milhar e vírgula como decimal
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def inferir_e_converter_tipos(df, colunas_texto, colunas_moeda):
@@ -20,10 +28,10 @@ def inferir_e_converter_tipos(df, colunas_texto, colunas_moeda):
     for col in df_novo.columns:
         # Tenta converter para float se for uma coluna de Moeda
         if col in colunas_moeda:
-            # Tenta limpar o formato BRL (R$, ponto como separador de milhar e vírgula como decimal)
+            # CRÍTICO: Conversão explícita de string para número (tratando vírgula decimal)
             try:
-                # CRÍTICO: Conversão explícita de string para número (tratando vírgula decimal)
-                df_novo[col] = df_novo[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+                # Remove espaços, remove separador de milhar (ponto), troca separador decimal (vírgula por ponto)
+                df_novo[col] = df_novo[col].astype(str).str.strip().str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
                 df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce')
             except Exception:
                 df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce')
@@ -35,6 +43,7 @@ def inferir_e_converter_tipos(df, colunas_texto, colunas_moeda):
         # Tenta converter colunas numéricas restantes para int/float se não forem datas
         elif df_novo[col].dtype not in ['datetime64[ns]']:
             try:
+                # Verifica se são todos inteiros, se sim, converte para inteiro
                 if df_novo[col].dropna().apply(lambda x: float(x).is_integer()).all():
                     df_novo[col] = pd.to_numeric(df_novo[col], errors='coerce', downcast='integer')
                 else:
@@ -52,7 +61,7 @@ def inferir_e_converter_tipos(df, colunas_texto, colunas_moeda):
             
     # 3. Conversão final para categorias e remoção de espaços
     for col in df_novo.select_dtypes(include=['object']):
-        df_novo[col] = df_novo[col].astype(str).str.strip()
+        df_novo[col] = df_novo[col].astype(str).str.strip().str.upper() # Padronização para UPPERCASE
         df_novo[col] = df_novo[col].astype('category')
 
     return df_novo
@@ -86,15 +95,22 @@ def gerar_rotulo_filtro(df_completo, filtros_ativos_dict, colunas_data, data_ran
     # Rótulos de Data
     if data_range and colunas_data:
         data_col = colunas_data[0]
-        data_series = df_completo[data_col].dropna()
+        # Converte para datetime e remove NaT antes de calcular min/max
+        data_series = pd.to_datetime(df_completo[data_col], errors='coerce').dropna()
         if not data_series.empty:
-            data_min_df = data_series.min()
-            data_max_df = data_series.max()
+            data_min_df = data_series.min().to_pydatetime()
+            data_max_df = data_series.max().to_pydatetime()
             
-            # Se o intervalo for diferente do total, mostra
-            if pd.to_datetime(data_range[0]) > data_min_df or pd.to_datetime(data_range[1]) < data_max_df:
-                data_inicio = data_range[0].strftime('%Y-%m-%d')
-                data_fim = data_range[1].strftime('%Y-%m-%d')
+            data_range_start = pd.to_datetime(data_range[0]).to_pydatetime()
+            data_range_end = pd.to_datetime(data_range[1]).to_pydatetime()
+            
+            # Compara se o intervalo selecionado é diferente do intervalo total do DF (com tolerância de 1 dia)
+            is_start_filtered = (data_range_start - data_min_df).days > 0
+            is_end_filtered = (data_max_df - data_range_end).days > 0
+
+            if is_start_filtered or is_end_filtered:
+                data_inicio = data_range_start.strftime('%Y-%m-%d')
+                data_fim = data_range_end.strftime('%Y-%m-%d')
                 rotulos.append(f"**Data ({data_col.title()})**: {data_inicio} até {data_fim}")
             
     if not rotulos:
